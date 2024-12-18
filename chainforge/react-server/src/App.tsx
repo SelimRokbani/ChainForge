@@ -32,6 +32,9 @@ import {
   IconAbacus,
 } from "@tabler/icons-react";
 import RemoveEdge from "./RemoveEdge";
+import RAGNode from "./RAGNode";
+import UploadNode from "./UploadNode";
+import Keynode from "./Keywordnode";
 import TextFieldsNode from "./TextFieldsNode"; // Import a custom node
 import PromptNode from "./PromptNode";
 import CodeEvaluatorNode from "./CodeEvaluatorNode";
@@ -153,6 +156,9 @@ const INITIAL_LLM = () => {
 };
 
 const nodeTypes = {
+  rag: RAGNode,
+  upload: UploadNode,
+  Keyword: Keynode,
   textfields: TextFieldsNode, // Register the custom node
   prompt: PromptNode,
   chat: PromptNode,
@@ -329,6 +335,9 @@ const App = () => {
   const addScriptNode = () => addNode("scriptNode", "script");
   const addItemsNode = () => addNode("csvNode", "csv");
   const addTabularDataNode = () => addNode("table");
+  const addragNode = () => addNode("ragNode", "rag");
+  const adduploadNode = () => addNode("uploadNode", "upload");
+  const addkeyNode = () => addNode("keyNode", "Keyword");
   const addCommentNode = () => addNode("comment");
   const addLLMEvalNode = () => addNode("llmeval");
   const addMultiEvalNode = () => addNode("multieval");
@@ -1006,6 +1015,24 @@ const App = () => {
               </MenuTooltip>
               <Menu.Divider />
               <Menu.Label>Prompters</Menu.Label>
+              <MenuTooltip label="Extract keywords from text">
+                <Menu.Item onClick={addkeyNode} icon={"⌨️"}>
+                  {" "}
+                  Keynode{" "}
+                </Menu.Item>
+              </MenuTooltip>
+              <MenuTooltip label="Extract Text from PDF files into chunks">
+                <Menu.Item onClick={addragNode} icon={"⬆️"}>
+                  {" "}
+                  RAGNode{" "}
+                </Menu.Item>
+              </MenuTooltip>
+              <MenuTooltip label="Upload files">
+                <Menu.Item onClick={adduploadNode} icon={"⬆️"}>
+                  {" "}
+                  UploadNode{" "}
+                </Menu.Item>
+              </MenuTooltip>
               <MenuTooltip label="Prompt one or multiple LLMs. Specify prompt variables in brackets {}.">
                 <Menu.Item onClick={addPromptNode} icon={"💬"}>
                   {" "}

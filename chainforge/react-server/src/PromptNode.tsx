@@ -712,8 +712,8 @@ const PromptNode: React.FC<PromptNodeProps> = ({
       if (past_chat_llms === undefined || pulled_chats === undefined) {
         triggerAlert(
           `You need to attach an input to the Past Conversation message first. For instance, you might query 
-multiple chat LLMs with a prompt node, and then attach the Prompt Node output to the
-Past Conversation input of this Chat Turn node in order to continue the chat.`,
+  multiple chat LLMs with a prompt node, and then attach the Prompt Node output to the
+  Past Conversation input of this Chat Turn node in order to continue the chat.`,
         );
         return;
       }
@@ -729,8 +729,8 @@ Past Conversation input of this Chat Turn node in order to continue the chat.`,
       ) {
         console.warn(
           `Chat history contains undefined content. This can happen if a Join Node was used, 
-as there is no longer a single prompt as the provenance of the conversation. 
-Soft failing by replacing undefined with empty strings.`,
+  as there is no longer a single prompt as the provenance of the conversation. 
+  Soft failing by replacing undefined with empty strings.`,
         );
         pulled_chats.forEach((c) => {
           c.messages = c.messages.map((m) => {
