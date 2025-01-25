@@ -389,10 +389,7 @@ export const LLMListContainer = forwardRef<
       // Together models have a substring "together/" that we need to strip:
       if (item.base_model === "together")
         item.formData.model = item.model.substring(9);
-<<<<<<< HEAD
       else item.formData.model = item.model;
-=======
->>>>>>> master
 
       let new_items: LLMSpec[] = [];
       if (selectModelAction === "add" || selectModelAction === undefined) {

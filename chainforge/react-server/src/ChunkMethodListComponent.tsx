@@ -236,7 +236,6 @@ const ChunkMethodListContainer = forwardRef<
     [methodItems, notifyItemsChanged],
   );
 
-
   const addMethod = useCallback(
     (m: Omit<ChunkMethodSpec, "key" | "settings">) => {
       const newItem: ChunkMethodSpec = {

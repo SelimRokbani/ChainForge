@@ -16,11 +16,10 @@ import BaseNode from "./BaseNode";
 import NodeLabel from "./NodeLabelComponent";
 import useStore from "./store";
 
-
 import LLMResponseInspectorModal, {
   LLMResponseInspectorModalRef,
 } from "./LLMResponseInspectorModal";
-import InspectFooter from "./InspectFooter"; 
+import InspectFooter from "./InspectFooter";
 import { IconSearch } from "@tabler/icons-react";
 
 import ChunkMethodListContainer, {

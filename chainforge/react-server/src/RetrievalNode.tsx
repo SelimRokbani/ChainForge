@@ -697,12 +697,12 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
         />
       </div>
       <InspectFooter
-        onClick={() => inspectorModalRef.current?.trigger()} 
-        showDrawerButton={false} 
+        onClick={() => inspectorModalRef.current?.trigger()}
+        showDrawerButton={false}
         onDrawerClick={() => {
           // Do nothing
         }}
-        isDrawerOpen={false} 
+        isDrawerOpen={false}
         label={
           <>
             Inspect responses <IconSearch size="12pt" />
