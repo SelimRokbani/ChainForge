@@ -1,0 +1,85 @@
+{
+  "flow": {
+    "nodes": [
+      {
+        "id": "input-topic",
+        "type": "text_input",
+        "position": { "x": 100, "y": 100 },
+        "width": 300,
+        "height": 100,
+        "data": {
+          "label": "Topic",
+          "placeholder": "Enter a topic for the dataset (e.g., 'World War II')"
+        }
+      },
+      {
+        "id": "input-samples",
+        "type": "number_input",
+        "position": { "x": 100, "y": 250 },
+        "width": 300,
+        "height": 100,
+        "data": {
+          "label": "Number of Samples",
+          "default": 5,
+          "min": 1,
+          "max": 100
+        }
+      },
+      {
+        "id": "dataset-generator",
+        "type": "llm",
+        "position": { "x": 400, "y": 150 },
+        "width": 500,
+        "height": 300,
+        "data": {
+          "prompt": "Generate a dataset of {input-samples} test cases on the topic: {input-topic}.\n\nEach test case should include:\n1. A query (a concise question about the topic).\n2. A long text containing both relevant and irrelevant information about the topic.\n3. The exact context from the long text that answers the query.\n4. The correct answer based on the extracted context.\n\nFormat the output as a JSON array with the following fields:\n- Query\n- LongText\n- ExpectedContext\n- ExpectedAnswer",
+          "model": "gpt-3.5-turbo",
+          "temperature": 0.7
+        }
+      },
+      {
+        "id": "table-output",
+        "type": "table",
+        "position": { "x": 950, "y": 200 },
+        "width": 600,
+        "height": 300,
+        "data": {
+          "columns": [
+            { "header": "Query", "key": "Query" },
+            { "header": "Long Text", "key": "LongText" },
+            { "header": "Expected Context", "key": "ExpectedContext" },
+            { "header": "Expected Answer", "key": "ExpectedAnswer" }
+          ],
+          "input": "dataset-generator"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "edge-topic-to-generator",
+        "source": "input-topic",
+        "sourceHandle": "text",
+        "target": "dataset-generator",
+        "targetHandle": "input-topic",
+        "markerEnd": { "type": "arrow", "width": 22, "height": 22 }
+      },
+      {
+        "id": "edge-samples-to-generator",
+        "source": "input-samples",
+        "sourceHandle": "number",
+        "target": "dataset-generator",
+        "targetHandle": "input-samples",
+        "markerEnd": { "type": "arrow", "width": 22, "height": 22 }
+      },
+      {
+        "id": "edge-generator-to-table",
+        "source": "dataset-generator",
+        "sourceHandle": "output",
+        "target": "table-output",
+        "targetHandle": "input",
+        "markerEnd": { "type": "arrow", "width": 22, "height": 22 }
+      }
+    ],
+    "viewport": { "x": 0, "y": 0, "zoom": 1 }
+  }
+}
