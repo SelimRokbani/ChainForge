@@ -81,7 +81,11 @@ const bucketChatHistoryInfosByLLM = (chat_hist_infos: ChatHistoryInfo[]) => {
   return chats_by_llm;
 };
 
+<<<<<<< HEAD
 export class PromptInfo {
+=======
+class PromptInfo {
+>>>>>>> master
   prompt: string;
   settings: Dict;
 
@@ -118,7 +122,11 @@ export interface PromptListPopoverProps {
   onClick: () => void;
 }
 
+<<<<<<< HEAD
 export const PromptListPopover: React.FC<PromptListPopoverProps> = ({
+=======
+const PromptListPopover: React.FC<PromptListPopoverProps> = ({
+>>>>>>> master
   promptInfos,
   onHover,
   onClick,
@@ -176,6 +184,7 @@ export const PromptListPopover: React.FC<PromptListPopoverProps> = ({
   );
 };
 
+<<<<<<< HEAD
 export interface PromptListModalProps {
   promptPreviews: PromptInfo[];
   infoModalOpened: boolean;
@@ -209,6 +218,8 @@ export const PromptListModal: React.FC<PromptListModalProps> = ({
   );
 };
 
+=======
+>>>>>>> master
 export interface PromptNodeProps {
   data: {
     title: string;
@@ -745,8 +756,13 @@ const PromptNode: React.FC<PromptNodeProps> = ({
       if (past_chat_llms === undefined || pulled_chats === undefined) {
         triggerAlert(
           `You need to attach an input to the Past Conversation message first. For instance, you might query 
+<<<<<<< HEAD
 multiple chat LLMs with a prompt node, and then attach the Prompt Node output to the
 Past Conversation input of this Chat Turn node in order to continue the chat.`,
+=======
+  multiple chat LLMs with a prompt node, and then attach the Prompt Node output to the
+  Past Conversation input of this Chat Turn node in order to continue the chat.`,
+>>>>>>> master
         );
         return;
       }
@@ -762,8 +778,13 @@ Past Conversation input of this Chat Turn node in order to continue the chat.`,
       ) {
         console.warn(
           `Chat history contains undefined content. This can happen if a Join Node was used, 
+<<<<<<< HEAD
 as there is no longer a single prompt as the provenance of the conversation. 
 Soft failing by replacing undefined with empty strings.`,
+=======
+  as there is no longer a single prompt as the provenance of the conversation. 
+  Soft failing by replacing undefined with empty strings.`,
+>>>>>>> master
         );
         pulled_chats.forEach((c) => {
           c.messages = c.messages.map((m) => {
@@ -1157,11 +1178,32 @@ Soft failing by replacing undefined with empty strings.`,
         ref={inspectModal}
         jsonResponses={jsonResponses ?? []}
       />
+<<<<<<< HEAD
       <PromptListModal
         promptPreviews={promptPreviews}
         infoModalOpened={infoModalOpened}
         closeInfoModal={closeInfoModal}
       />
+=======
+      <Modal
+        title={
+          "List of prompts that will be sent to LLMs (" +
+          promptPreviews.length +
+          " total)"
+        }
+        size="xl"
+        opened={infoModalOpened}
+        onClose={closeInfoModal}
+        styles={{
+          header: { backgroundColor: "#FFD700" },
+          root: { position: "relative", left: "-5%" },
+        }}
+      >
+        <Box m="lg" mt="xl">
+          {displayPromptInfos(promptPreviews, true)}
+        </Box>
+      </Modal>
+>>>>>>> master
 
       {node_type === "chat" ? (
         <div ref={setRef}>

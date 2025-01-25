@@ -24,8 +24,11 @@ import useStore from "./store";
 import { sampleRandomElements } from "./backend/utils";
 import { Dict, TabularDataRowType, TabularDataColType } from "./backend/typing";
 import { Position } from "reactflow";
+<<<<<<< HEAD
 import { AIGenReplaceTablePopover } from "./AiPopover";
 import { parseTableData } from "./backend/tableUtils";
+=======
+>>>>>>> master
 
 const defaultRows: TabularDataRowType[] = [
   {
@@ -306,8 +309,48 @@ const TabularDataNode: React.FC<TabularDataNodeProps> = ({ data, id }) => {
   // NOTE: JSON objects should be in row format, with keys
   //       as the header names. The internal keys of the columns will use uids to be unique.
   const importJSONList = (jsonl: unknown) => {
+<<<<<<< HEAD
     const { columns, rows } = parseTableData(jsonl as any[]);
     setTableColumns(columns);
+=======
+    if (!Array.isArray(jsonl)) {
+      throw new Error(
+        "Imported tabular data is not in array format: " +
+          (jsonl !== undefined ? (jsonl as object).toString() : ""),
+      );
+    }
+
+    // Extract unique column names
+    const headers = new Set<string>();
+    jsonl.forEach((o) => Object.keys(o).forEach((key) => headers.add(key)));
+
+    // Create new columns with unique ids c0, c1 etc
+    const cols = Array.from(headers).map((h, idx) => ({
+      header: h,
+      key: `c${idx.toString()}`,
+    }));
+
+    // Construct a lookup table from header name to our new key uid
+    const col_key_lookup: Dict<string> = {};
+    cols.forEach((c) => {
+      col_key_lookup[c.header] = c.key;
+    });
+
+    // Construct the table rows by swapping the header names for our new columm keys
+    const rows = jsonl.map((o) => {
+      const row: TabularDataRowType = { __uid: uuidv4() };
+      Object.keys(o).forEach((header) => {
+        const raw_val = o[header];
+        const val =
+          typeof raw_val === "object" ? JSON.stringify(raw_val) : raw_val;
+        row[col_key_lookup[header]] = val.toString();
+      });
+      return row;
+    });
+
+    // Save the new columns and rows
+    setTableColumns(cols);
+>>>>>>> master
     setTableData(rows);
     pingOutputNodes(id);
   };
@@ -466,6 +509,7 @@ const TabularDataNode: React.FC<TabularDataNodeProps> = ({ data, id }) => {
     [ref],
   );
 
+<<<<<<< HEAD
   const [isLoading, setIsLoading] = useState(false);
 
   const [rowValues, setRowValues] = useState<string[]>(
@@ -601,6 +645,8 @@ const TabularDataNode: React.FC<TabularDataNodeProps> = ({ data, id }) => {
     setRowValues(updatedRows.map((row) => JSON.stringify(row))); // Update row values
   };
 
+=======
+>>>>>>> master
   return (
     <BaseNode
       classNames="tabular-data-node"
@@ -613,6 +659,7 @@ const TabularDataNode: React.FC<TabularDataNodeProps> = ({ data, id }) => {
         nodeId={id}
         icon={"🗂️"}
         customButtons={[
+<<<<<<< HEAD
           <AIGenReplaceTablePopover
             key="ai-popover"
             values={tableData}
@@ -623,6 +670,8 @@ const TabularDataNode: React.FC<TabularDataNodeProps> = ({ data, id }) => {
             areValuesLoading={isLoading}
             setValuesLoading={setIsLoading}
           />,
+=======
+>>>>>>> master
           <Tooltip
             key={0}
             label="Accepts xlsx, jsonl, and csv files with a header row"
@@ -637,6 +686,10 @@ const TabularDataNode: React.FC<TabularDataNodeProps> = ({ data, id }) => {
           </Tooltip>,
         ]}
       />
+<<<<<<< HEAD
+=======
+
+>>>>>>> master
       <RenameValueModal
         ref={renameColumnModal}
         initialValue={

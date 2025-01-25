@@ -32,6 +32,12 @@ import {
   IconAbacus,
 } from "@tabler/icons-react";
 import RemoveEdge from "./RemoveEdge";
+<<<<<<< HEAD
+=======
+import ChunkingNode from "./ChunkingNode";
+import UploadNode from "./UploadNode";
+import RetrievalNode from "./RetrievalNode";
+>>>>>>> master
 import TextFieldsNode from "./TextFieldsNode"; // Import a custom node
 import PromptNode from "./PromptNode";
 import CodeEvaluatorNode from "./CodeEvaluatorNode";
@@ -153,6 +159,12 @@ const INITIAL_LLM = () => {
 };
 
 const nodeTypes = {
+<<<<<<< HEAD
+=======
+  chunk: ChunkingNode,
+  upload: UploadNode,
+  retrieval: RetrievalNode,
+>>>>>>> master
   textfields: TextFieldsNode, // Register the custom node
   prompt: PromptNode,
   chat: PromptNode,
@@ -329,6 +341,12 @@ const App = () => {
   const addScriptNode = () => addNode("scriptNode", "script");
   const addItemsNode = () => addNode("csvNode", "csv");
   const addTabularDataNode = () => addNode("table");
+<<<<<<< HEAD
+=======
+  const addchunkingNode = () => addNode("chunkingNode", "chunk");
+  const adduploadNode = () => addNode("uploadNode", "upload");
+  const addretrievalNode = () => addNode("retrievalNode", "retrieval");
+>>>>>>> master
   const addCommentNode = () => addNode("comment");
   const addLLMEvalNode = () => addNode("llmeval");
   const addMultiEvalNode = () => addNode("multieval");
@@ -1006,6 +1024,27 @@ const App = () => {
               </MenuTooltip>
               <Menu.Divider />
               <Menu.Label>Prompters</Menu.Label>
+<<<<<<< HEAD
+=======
+              <MenuTooltip label="Retrieve context from chunks trhough a query.">
+                <Menu.Item onClick={addretrievalNode} icon={"⌨️"}>
+                  {" "}
+                  Retrieval Node{" "}
+                </Menu.Item>
+              </MenuTooltip>
+              <MenuTooltip label="Extract Text from documents into chunks">
+                <Menu.Item onClick={addchunkingNode} icon={"⬆️"}>
+                  {" "}
+                  Chunking Node{" "}
+                </Menu.Item>
+              </MenuTooltip>
+              <MenuTooltip label="Upload files">
+                <Menu.Item onClick={adduploadNode} icon={"⬆️"}>
+                  {" "}
+                  UploadNode{" "}
+                </Menu.Item>
+              </MenuTooltip>
+>>>>>>> master
               <MenuTooltip label="Prompt one or multiple LLMs. Specify prompt variables in brackets {}.">
                 <Menu.Item onClick={addPromptNode} icon={"💬"}>
                   {" "}

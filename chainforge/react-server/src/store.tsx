@@ -133,6 +133,7 @@ export const initLLMProviderMenu: (LLMSpec | LLMGroup)[] = [
     ],
   },
   {
+<<<<<<< HEAD
     group: "Claude",
     emoji: "📚",
     items: [
@@ -192,6 +193,20 @@ export const initLLMProviderMenu: (LLMSpec | LLMGroup)[] = [
         temp: 0.7,
       },
     ],
+=======
+    name: "Claude",
+    emoji: "📚",
+    model: "claude-2",
+    base_model: "claude-v1",
+    temp: 0.5,
+  },
+  {
+    name: "Gemini",
+    emoji: "♊",
+    model: "gemini-pro",
+    base_model: "palm2-bison",
+    temp: 0.7,
+>>>>>>> master
   },
   {
     group: "HuggingFace",

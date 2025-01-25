@@ -133,7 +133,11 @@ For more specific details, see our [documentation](https://chainforge.ai/docs/no
 
 # Development
 
+<<<<<<< HEAD
 ChainForge was created by [Ian Arawjo](http://ianarawjo.com/index.html), a postdoctoral scholar in Harvard HCI's [Glassman Lab](http://glassmanlab.seas.harvard.edu/) with support from the Harvard HCI community. Collaborators include PhD students [Priyan Vaithilingam](https://priyan.info) and [Chelse Swoopes](https://seas.harvard.edu/person/chelse-swoopes), Harvard undergraduate [Sean Yang](https://shawsean.com), and faculty members [Elena Glassman](http://glassmanlab.seas.harvard.edu/glassman.html) and [Martin Wattenberg](https://www.bewitched.com/about.html). Additional collaborators include UC Berkeley PhD student Shreya Shankar and Université de Montréal undergraduate Cassandre Hamel.
+=======
+ChainForge was created by [Ian Arawjo](http://ianarawjo.com/index.html), a postdoctoral scholar in Harvard HCI's [Glassman Lab](http://glassmanlab.seas.harvard.edu/) with support from the Harvard HCI community. Collaborators include PhD students [Priyan Vaithilingam](https://priyan.info) and [Chelse Swoopes](https://seas.harvard.edu/person/chelse-swoopes), Harvard undergraduate [Sean Yang](https://shawsean.com), and faculty members [Elena Glassman](http://glassmanlab.seas.harvard.edu/glassman.html) and [Martin Wattenberg](https://www.bewitched.com/about.html).
+>>>>>>> master
 
 This work was partially funded by the NSF grants IIS-2107391, IIS-2040880, and IIS-1955699. Any opinions, findings, and conclusions or recommendations expressed in this material are those of the author(s) and do not necessarily reflect the views of the National Science Foundation.
 
@@ -156,6 +160,7 @@ We welcome open-source collaborators. If you want to report a bug or request a f
 
 # Cite Us
 
+<<<<<<< HEAD
 If you use ChainForge for research purposes, whether by building upon the source code or investigating LLM behavior using the tool, we ask that you cite our [CHI research paper](https://dl.acm.org/doi/full/10.1145/3613904.3642016) in any related publications. The BibTeX you can use is:
 
 ```bibtex
@@ -165,6 +170,19 @@ If you use ChainForge for research purposes, whether by building upon the source
   booktitle={Proceedings of the CHI Conference on Human Factors in Computing Systems},
   pages={1--18},
   year={2024}
+=======
+If you use ChainForge for research purposes, or build upon the source code, we ask that you cite our [arXiv pre-print](https://arxiv.org/abs/2309.09128) in any related publications.
+The BibTeX you can use is:
+
+```bibtex
+@misc{arawjo2023chainforge,
+      title={ChainForge: A Visual Toolkit for Prompt Engineering and LLM Hypothesis Testing},
+      author={Ian Arawjo and Chelse Swoopes and Priyan Vaithilingam and Martin Wattenberg and Elena Glassman},
+      year={2023},
+      eprint={2309.09128},
+      archivePrefix={arXiv},
+      primaryClass={cs.HC}
+>>>>>>> master
 }
 ```
 

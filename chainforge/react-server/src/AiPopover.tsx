@@ -10,6 +10,7 @@ import {
   Badge,
   Textarea,
   Alert,
+<<<<<<< HEAD
   Divider,
   Tooltip,
 } from "@mantine/core";
@@ -21,6 +22,14 @@ import {
   AIError,
   getAIFeaturesModels,
   generateAndReplaceTable,
+=======
+} from "@mantine/core";
+import {
+  autofill,
+  generateAndReplace,
+  AIError,
+  getAIFeaturesModels,
+>>>>>>> master
 } from "./backend/ai";
 import { IconSparkles, IconAlertCircle } from "@tabler/icons-react";
 import { AlertModalContext } from "./AlertModal";
@@ -35,6 +44,7 @@ import { queryLLM } from "./backend/backend";
 import { splitText } from "./SplitNode";
 import { escapeBraces } from "./backend/template";
 import { cleanMetavarsFilterFunc } from "./backend/utils";
+<<<<<<< HEAD
 import {
   Dict,
   TabularDataColType,
@@ -42,6 +52,9 @@ import {
   VarsContext,
 } from "./backend/typing";
 import { v4 as uuidv4 } from "uuid";
+=======
+import { Dict, VarsContext } from "./backend/typing";
+>>>>>>> master
 
 const zeroGap = { gap: "0rem" };
 const popoverShadow = "rgb(38, 57, 77) 0px 10px 30px -14px";
@@ -85,7 +98,11 @@ export const buildGenEvalCodePrompt = (
   specPrompt: string,
   manyFuncs?: boolean,
   onlyBooleanFuncs?: boolean,
+<<<<<<< HEAD
 ) => `You are to generate ${manyFuncs ? "many different functions" : "one function"} to evaluate textual data, given a user-specified specification.
+=======
+) => `You are to generate ${manyFuncs ? "many different functions" : "one function"} to evaluate textual data, given a user-specified specification. 
+>>>>>>> master
 The function${manyFuncs ? "s" : ""} will be mapped over an array of objects of type ResponseInfo.
 ${manyFuncs ? "Each" : "Your"} solution must contain a single function called 'evaluate' that takes a single object, 'r', of type ResponseInfo. A ResponseInfo is defined as:
 
@@ -95,8 +112,13 @@ For instance, here is an evaluator that returns the length of a response:
 
 \`\`\`${progLang === "javascript" ? INFO_EXAMPLE_JS : INFO_EXAMPLE_PY}\`\`\`
 
+<<<<<<< HEAD
 You can only write in ${progLang.charAt(0).toUpperCase() + progLang.substring(1)}.
 You ${progLang === "javascript" ? 'CANNOT import any external packages, and always use "let" to define variables instead of "var".' : "can use imports if necessary. Do not include any type hints."}
+=======
+You can only write in ${progLang.charAt(0).toUpperCase() + progLang.substring(1)}. 
+You ${progLang === "javascript" ? 'CANNOT import any external packages, and always use "let" to define variables instead of "var".' : "can use imports if necessary. Do not include any type hints."} 
+>>>>>>> master
 Your function${manyFuncs ? "s" : ""} can ONLY return ${onlyBooleanFuncs ? "boolean" : "boolean, numeric, or string"} values.
 ${context}
 Here is the user's specification:
@@ -237,6 +259,7 @@ export function AIPopover({
   );
 }
 
+<<<<<<< HEAD
 export interface AIGenReplaceTablePopoverProps {
   // Values in the rows of the table's columns
   values: TabularDataRowType[];
@@ -566,6 +589,8 @@ export function AIGenReplaceTablePopover({
   );
 }
 
+=======
+>>>>>>> master
 export interface AIGenReplaceItemsPopoverProps {
   // Strings for the Extend feature to use as a basis.
   values: Dict<string> | string[];
@@ -648,7 +673,10 @@ export function AIGenReplaceItemsPopover({
   const handleGenerateAndReplace = () => {
     setDidGenerateAndReplaceError(false);
     setValuesLoading(true);
+<<<<<<< HEAD
 
+=======
+>>>>>>> master
     generateAndReplace(
       generateAndReplacePrompt,
       generateAndReplaceNumber,
@@ -945,10 +973,17 @@ export function AIGenCodeEvaluatorPopover({
 
     const template = `Edit the code below according to the following: ${editPrompt}
 
+<<<<<<< HEAD
 You ${progLang === "javascript" ? "CANNOT import any external packages." : "can use imports if necessary. Do not include any type hints."}
 Functions should only return boolean, numeric, or string values. Present the edited code in a single block.
 
 Code:
+=======
+You ${progLang === "javascript" ? "CANNOT import any external packages." : "can use imports if necessary. Do not include any type hints."} 
+Functions should only return boolean, numeric, or string values. Present the edited code in a single block.
+
+Code: 
+>>>>>>> master
 \`\`\`${progLang}
 ${currentEvalCode}
 \`\`\``;

@@ -7,9 +7,14 @@ import {
   escapeBraces,
   containsSameTemplateVariables,
 } from "./template";
+<<<<<<< HEAD
 import { ChatHistoryInfo, Dict, TabularDataColType } from "./typing";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { sampleRandomElements } from "./utils";
+=======
+import { ChatHistoryInfo, Dict } from "./typing";
+import { fromMarkdown } from "mdast-util-from-markdown";
+>>>>>>> master
 
 export class AIError extends Error {
   constructor(message: string) {
@@ -25,7 +30,11 @@ export type Row = string;
 const AIFeaturesLLMs = [
   {
     provider: "OpenAI",
+<<<<<<< HEAD
     small: { value: "gpt-4o", label: "OpenAI GPT4o" },
+=======
+    small: { value: "gpt-3.5-turbo", label: "OpenAI GPT3.5" },
+>>>>>>> master
     large: { value: "gpt-4", label: "OpenAI GPT4" },
   },
   {
@@ -113,6 +122,7 @@ function autofillSystemMessage(
 }
 
 /**
+<<<<<<< HEAD
  * Generate the system message used for autofillingTables.
  * @param n number of rows to generate
  * @param templateVariables list of template variables to use
@@ -131,6 +141,8 @@ function generateColumnSystemMessage(): string {
 }
 
 /**
+=======
+>>>>>>> master
  * Generate the system message used for generate and replace (GAR).
  */
 function GARSystemMessage(
@@ -142,6 +154,7 @@ function GARSystemMessage(
 }
 
 /**
+<<<<<<< HEAD
  * Generate the system message used for generate and replace table (GART).
  * @param n number of rows to generate
  * @param creative whether the output should be diverse
@@ -153,6 +166,8 @@ function GARTSystemMessage(n: number, generatePrompts?: boolean): string {
 }
 
 /**
+=======
+>>>>>>> master
  * Returns a string representing the given rows as a markdown list
  * @param rows to encode
  */
@@ -161,6 +176,7 @@ function encode(rows: Row[]): string {
 }
 
 /**
+<<<<<<< HEAD
  * Returns a string representing the given rows and columns as a markdown table
  * @param cols to encode as headers
  * @param rows to encode as table rows
@@ -174,6 +190,8 @@ function encodeTable(cols: string[], rows: Row[]): string {
 }
 
 /**
+=======
+>>>>>>> master
  * Returns a list of items that appears in the given markdown text. Throws an AIError if the string is not in markdown list format.
  * @param mdText raw text to decode (in markdown format)
  * @param templateVariables to check for
@@ -206,6 +224,7 @@ function decode(mdText: string): Row[] {
 }
 
 /**
+<<<<<<< HEAD
  * Returns an object containing the columns and rows of the table decoded from the given markdown text. Throws an AIError if the string is not in "markdown table format".
  * @param mdText markdown text to decode
  * @returns an object containing the columns and rows of the table
@@ -269,6 +288,8 @@ function decodeTable(mdText: string): { cols: string[]; rows: Row[] } {
 }
 
 /**
+=======
+>>>>>>> master
  * Uses an LLM to interpret the pattern from the given rows as return new rows following the pattern.
  * @param input rows for the autofilling system
  * @param n number of results to return
@@ -328,6 +349,7 @@ export async function autofill(
 }
 
 /**
+<<<<<<< HEAD
  * Uses an LLM to interpret the pattern from the given table (columns and rows) and generate new rows following the pattern.
  * @param input Object containing the columns and rows of the input table.
  * @param n Number of new rows to generate.
@@ -527,6 +549,8 @@ export async function generateColumn(
 }
 
 /**
+=======
+>>>>>>> master
  * Uses an LLM to generate `n` new rows based on the pattern explained in `prompt`.
  * @param prompt
  * @param n
@@ -578,6 +602,7 @@ export async function generateAndReplace(
   const new_items = decode(result.responses[0].responses[0] as string);
   return new_items.slice(0, n);
 }
+<<<<<<< HEAD
 
 /**
  * Uses an LLM to generate a table with `n` rows based on the pattern explained in `prompt`.
@@ -648,3 +673,5 @@ export async function generateAndReplaceTable(
     );
   }
 }
+=======
+>>>>>>> master

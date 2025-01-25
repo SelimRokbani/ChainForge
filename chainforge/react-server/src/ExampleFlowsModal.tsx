@@ -1,4 +1,5 @@
 import React, { forwardRef, useImperativeHandle } from "react";
+<<<<<<< HEAD
 import {
   SimpleGrid,
   Card,
@@ -8,6 +9,9 @@ import {
   Tabs,
   Stack,
 } from "@mantine/core";
+=======
+import { SimpleGrid, Card, Modal, Text, Button, Tabs } from "@mantine/core";
+>>>>>>> master
 import { useDisclosure } from "@mantine/hooks";
 import { IconChartDots3 } from "@tabler/icons-react";
 import { Dict } from "./backend/typing";
@@ -339,6 +343,7 @@ const ExampleFlowCard: React.FC<ExampleFlowCardProps> = ({
   onSelect,
 }) => {
   return (
+<<<<<<< HEAD
     <Card
       shadow="sm"
       radius="md"
@@ -371,6 +376,30 @@ const ExampleFlowCard: React.FC<ExampleFlowCardProps> = ({
           {buttonText ?? "Try me"}
         </Button>
       </Stack>
+=======
+    <Card shadow="sm" padding="lg" radius="md" withBorder>
+      <Text mb="xs" weight={500}>
+        {title}
+      </Text>
+
+      <Text size="sm" color="dimmed" lh={1.3}>
+        {description}
+      </Text>
+
+      <Button
+        onClick={() => {
+          if (onSelect) onSelect(filename);
+        }}
+        variant="light"
+        color="blue"
+        fullWidth
+        size="sm"
+        mt="md"
+        radius="md"
+      >
+        {buttonText ?? "Try me"}
+      </Button>
+>>>>>>> master
     </Card>
   );
 };
@@ -432,6 +461,7 @@ const ExampleFlowsModal = forwardRef<
         <Tabs.Panel value="examples" pt="xs">
           <SimpleGrid cols={3} spacing="sm" verticalSpacing="sm">
             <ExampleFlowCard
+<<<<<<< HEAD
               title="📑 Compare between prompt templates"
               description="Compare between prompt templates using template chaining. Visualize response quality across models."
               filename="compare-prompts"
@@ -439,11 +469,15 @@ const ExampleFlowsModal = forwardRef<
             />
             <ExampleFlowCard
               title="📊 Compare prompt across models"
+=======
+              title="Compare length of responses across LLMs"
+>>>>>>> master
               description="A simple evaluation with a prompt template, some inputs, and three models to prompt. Visualizes variability in response length."
               filename="basic-comparison"
               onSelect={onSelect}
             />
             <ExampleFlowCard
+<<<<<<< HEAD
               title="🤖 Compare system prompts"
               description="Compares response quality across different system prompts. Visualizes how well it sticks to the instructions to only print Racket code."
               filename="comparing-system-msg"
@@ -511,17 +545,38 @@ const ExampleFlowsModal = forwardRef<
             />
             <ExampleFlowCard
               title="🗯 Check robustness to prompt injection attacks"
+=======
+              title="Robustness to prompt injection attacks"
+>>>>>>> master
               description="Get a sense of different model's robustness against prompt injection attacks."
               filename="prompt-injection-test"
               onSelect={onSelect}
             />
             <ExampleFlowCard
+<<<<<<< HEAD
               title="🔢 Ground truth evaluation for math problems"
               description="Uses a Tabular Data Node to evaluate LLM performance on basic math problems. Compares responses to expected answer and plots performance."
+=======
+              title="Chain prompts together"
+              description="Chain one prompt into another to extract entities from a text response. Plots number of entities."
+              filename="chaining-prompts"
+              onSelect={onSelect}
+            />
+            <ExampleFlowCard
+              title="Measure impact of system message on response"
+              description="Compares response quality across different ChatGPT system prompts. Visualizes how well it sticks to the instructions to only print Racket code."
+              filename="comparing-system-msg"
+              onSelect={onSelect}
+            />
+            <ExampleFlowCard
+              title="Ground truth evaluation for math problems"
+              description="Uses a tabular data node to evaluate LLM performance on basic math problems. Compares responses to expected answer and plots performance across LLMs."
+>>>>>>> master
               filename="basic-math"
               onSelect={onSelect}
             />
             <ExampleFlowCard
+<<<<<<< HEAD
               title="🦟 Test knowledge of mosquitos"
               description="Uses an LLM scorer to test whether LLMs know the difference between lifetimes of male and female mosquitos."
               filename="mosquito-knowledge"
@@ -531,6 +586,11 @@ const ExampleFlowsModal = forwardRef<
               title="🖼 Generate images of animals"
               description="Shows images of a fox, sparrow, and a pig as a computer scientist and a gamer, using Dall-E2."
               filename="animal-images"
+=======
+              title="Detect whether OpenAI function call was triggered"
+              description="Basic example showing whether a given prompt triggered an OpenAI function call. Also shows difference between ChatGPT prior to function calls, and function call version."
+              filename="basic-function-calls"
+>>>>>>> master
               onSelect={onSelect}
             />
           </SimpleGrid>
@@ -546,10 +606,17 @@ const ExampleFlowsModal = forwardRef<
             >
               OpenAI evals
             </a>
+<<<<<<< HEAD
             {` benchmarking package. We currently load evals with a common system
             message, a single 'turn' (prompt), and evaluation types of
             'includes', 'match', and 'fuzzy match', and a reasonable number of
             prompts. `}
+=======
+            {`benchmarking package. We currently load evals with a common system
+            message, a single 'turn' (prompt), and evaluation types of
+            'includes', 'match', and 'fuzzy match', and a reasonable number of
+            prompts. &nbsp;`}
+>>>>>>> master
             <i>
               Warning: some evals include tables with 1000 prompts or more.{" "}
             </i>

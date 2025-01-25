@@ -606,7 +606,11 @@ const ClaudeSettings: ModelSettingsDict = {
 };
 
 const PaLM2Settings: ModelSettingsDict = {
+<<<<<<< HEAD
   fullName: "Google AI Models (Gemini)",
+=======
+  fullName: "Google AI Models (Gemini & PaLM)",
+>>>>>>> master
   schema: {
     type: "object",
     required: ["shortname"],
@@ -623,6 +627,7 @@ const PaLM2Settings: ModelSettingsDict = {
         title: "Model",
         description:
           "Select a PaLM model to query. For more details on the differences, see the Google PaLM API documentation.",
+<<<<<<< HEAD
         enum: [
           "gemini-1.5-flash",
           "gemini-1.5-flash-8b",
@@ -650,6 +655,16 @@ const PaLM2Settings: ModelSettingsDict = {
           "Enter your system message here, to be passed to the systemInstructions parameter.",
         default: "",
       },
+=======
+        enum: ["gemini-pro", "text-bison-001", "chat-bison-001"],
+        default: "gemini-pro",
+        shortname_map: {
+          "text-bison-001": "PaLM2-text",
+          "chat-bison-001": "PaLM2-chat",
+          "gemini-pro": "Gemini",
+        },
+      },
+>>>>>>> master
       temperature: {
         type: "number",
         title: "temperature",
@@ -704,9 +719,12 @@ const PaLM2Settings: ModelSettingsDict = {
     model: {
       "ui:help": "Defaults to gemini-pro.",
     },
+<<<<<<< HEAD
     system_msg: {
       "ui:widget": "textarea",
     },
+=======
+>>>>>>> master
     temperature: {
       "ui:help": "Defaults to 0.5.",
       "ui:widget": "range",
