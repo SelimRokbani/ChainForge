@@ -1,56 +1,45 @@
-import React, {
-  useState,
-  useCallback,
-  useEffect,
-  useImperativeHandle,
-  forwardRef,
-  Suspense,
-  useRef,
-} from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Handle, Position } from "reactflow";
 import {
   Button,
   TextInput,
   Group,
   Text,
-  Modal,
   LoadingOverlay,
-  Table,
-  ScrollArea,
-  Tabs,
   ActionIcon,
   Menu,
-  Select,
   Divider,
 } from "@mantine/core";
 import {
   IconSearch,
-  IconLayoutList,
-  IconTable,
-  IconTrash,
   IconPlus,
   IconSettings,
+  IconTrash,
 } from "@tabler/icons-react";
-import { useDisclosure } from "@mantine/hooks";
 import { v4 as uuid } from "uuid";
-import Form from "@rjsf/core";
-import validator from "@rjsf/validator-ajv8";
 
-// Import your custom node and store
 import BaseNode from "./BaseNode";
 import NodeLabel from "./NodeLabelComponent";
 import useStore from "./store";
 import InspectFooter from "./InspectFooter";
 
-// -------------------- Types & Interfaces --------------------
 
+import LLMResponseInspectorModal, {
+  LLMResponseInspectorModalRef,
+} from "./LLMResponseInspectorModal";
+import { LLMResponse } from "./backend/typing";
+
+// ---------- Type Declarations (inline) ----------
 export interface RetrievalChunk {
   text: string;
   similarity: number;
+  docTitle?: string;
+  chunkId?: string;
+  chunkMethod?: string;
 }
 
 export interface RetrievalMethodResult {
-  label: string;
+  label: string; // "BM25" or "Cosine Similarity (HuggingFace Transformers)"
   retrieved: RetrievalChunk[];
 }
 
@@ -67,197 +56,7 @@ export interface RetrievalMethodSpec {
   vectorLib?: string;
 }
 
-// -------------------- Chunk Inspector UI --------------------
-
-const methodColors = ["#FFEDD5", "#FEF3C7", "#ECFDF5", "#E0F2FE", "#EDE9FE"];
-const colorForIndex = (index: number) =>
-  methodColors[index % methodColors.length];
-
-const ChunkDisplay: React.FC<{ chunk: RetrievalChunk }> = ({ chunk }) => {
-  const [expanded, setExpanded] = useState(false);
-  const sampleText =
-    chunk.text.length > 40 ? chunk.text.substring(0, 40) + "..." : chunk.text;
-
-  return (
-    <div>
-      <Text size="xs">{expanded ? chunk.text : sampleText}</Text>
-      {chunk.text.length > 40 && (
-        <Button
-          variant="subtle"
-          compact
-          onClick={() => setExpanded((v) => !v)}
-          mt={4}
-        >
-          {expanded ? "Show Less" : "Show Full"}
-        </Button>
-      )}
-    </div>
-  );
-};
-
-interface ChunkInspectorProps {
-  results: RetrievalResults;
-  wideFormat?: boolean;
-}
-
-const ChunkInspector: React.FC<ChunkInspectorProps> = ({
-  results,
-  wideFormat,
-}) => {
-  const [viewFormat, setViewFormat] = useState<"list" | "table">("list");
-  const entries = Object.entries(results);
-
-  const tableView = (
-    <Table striped withColumnBorders fontSize={wideFormat ? "sm" : "xs"}>
-      <thead>
-        <tr>
-          <th>Method</th>
-          <th>Chunk Sample</th>
-          <th>Similarity</th>
-        </tr>
-      </thead>
-      <tbody>
-        {entries.map(([key, result], methodIndex) =>
-          result.retrieved.map((chunk, idx) => (
-            <tr
-              key={`${key}-${idx}`}
-              style={{ backgroundColor: colorForIndex(methodIndex) }}
-            >
-              {idx === 0 && (
-                <td
-                  rowSpan={result.retrieved.length}
-                  style={{ verticalAlign: "middle", fontWeight: 600 }}
-                >
-                  {result.label}
-                </td>
-              )}
-              <td>
-                <ScrollArea style={{ maxHeight: 100 }}>
-                  <ChunkDisplay chunk={chunk} />
-                </ScrollArea>
-              </td>
-              <td>
-                <Text size={wideFormat ? "sm" : "xs"}>
-                  {chunk.similarity.toFixed(3)}
-                </Text>
-              </td>
-            </tr>
-          )),
-        )}
-      </tbody>
-    </Table>
-  );
-
-  const listView = (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {entries.map(([key, result], methodIndex) => (
-        <div
-          key={key}
-          style={{
-            padding: "8px",
-            backgroundColor: colorForIndex(methodIndex),
-            borderRadius: 6,
-          }}
-        >
-          <Text weight={600} mb={4}>
-            {result.label}
-          </Text>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {result.retrieved.map((chunk, idx) => (
-              <div
-                key={`${key}-${idx}`}
-                style={{
-                  flex: "1 0 30%",
-                  padding: "8px",
-                  border: "1px solid #ccc",
-                  borderRadius: 4,
-                  backgroundColor: "#ffffff",
-                }}
-              >
-                <ChunkDisplay chunk={chunk} />
-                <Text size={wideFormat ? "sm" : "xs"} weight={500} mt={4}>
-                  Similarity: {chunk.similarity.toFixed(3)}
-                </Text>
-              </div>
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-
-  return (
-    <div style={{ padding: 8 }}>
-      <Tabs
-        value={viewFormat}
-        onTabChange={(val) => setViewFormat(val as "list" | "table")}
-        styles={{ tabLabel: { fontSize: wideFormat ? "12pt" : "9pt" } }}
-      >
-        <Tabs.List>
-          <Tabs.Tab value="list">
-            <IconLayoutList size="10pt" style={{ marginBottom: 2 }} /> List View
-          </Tabs.Tab>
-          <Tabs.Tab value="table">
-            <IconTable size="10pt" style={{ marginBottom: 2 }} /> Table View
-          </Tabs.Tab>
-        </Tabs.List>
-        <Tabs.Panel value="list" pt="xs">
-          {listView}
-        </Tabs.Panel>
-        <Tabs.Panel value="table" pt="xs">
-          {tableView}
-        </Tabs.Panel>
-      </Tabs>
-    </div>
-  );
-};
-
-export interface ChunkInspectorModalRef {
-  trigger: () => void;
-}
-
-export interface ChunkInspectorModalProps {
-  results: RetrievalResults;
-}
-
-const ChunkInspectorModal = forwardRef<
-  ChunkInspectorModalRef,
-  ChunkInspectorModalProps
->(function ChunkInspectorModal({ results }, ref) {
-  const [opened, setOpened] = useState(false);
-  const trigger = () => setOpened(true);
-  useImperativeHandle(ref, () => ({ trigger }));
-
-  return (
-    <Modal
-      opened={opened}
-      onClose={() => setOpened(false)}
-      size="90%"
-      title={
-        <Group position="apart" noWrap>
-          <Text>Retrieved Chunks</Text>
-          <Button
-            variant="outline"
-            size="xs"
-            onClick={() =>
-              navigator.clipboard.writeText(JSON.stringify(results, null, 2))
-            }
-          >
-            Copy JSON
-          </Button>
-        </Group>
-      }
-    >
-      <Suspense fallback={<LoadingOverlay visible />}>
-        <ChunkInspector results={results} wideFormat={true} />
-      </Suspense>
-    </Modal>
-  );
-});
-ChunkInspectorModal.displayName = "ChunkInspectorModal";
-
-// -------------------- Retrieval Method Groups & Menu --------------------
-
+// Example data for retrieval methods
 const vectorOptions = [
   "HuggingFace Transformers",
   "OpenAI Embeddings",
@@ -326,6 +125,7 @@ const retrievalMethodGroups = [
   },
 ];
 
+// ---------- UI for selecting retrieval methods -----------
 interface RetrievalMethodListContainerProps {
   initMethodItems?: RetrievalMethodSpec[];
   onItemsChange?: (
@@ -351,7 +151,6 @@ const RetrievalMethodListContainer: React.FC<
     [onItemsChange],
   );
 
-  // Insert new method with optional vector library
   const addMethod = useCallback(
     (
       method: Omit<RetrievalMethodSpec, "key" | "vectorLib">,
@@ -406,6 +205,7 @@ const RetrievalMethodListContainer: React.FC<
                 <Menu.Label>{group.label}</Menu.Label>
                 {group.items.map((item) => {
                   if (item.needsVector) {
+                    // Multi-level menu if user must choose a library
                     return (
                       <Menu
                         key={item.baseMethod}
@@ -486,8 +286,7 @@ const RetrievalMethodListContainer: React.FC<
   );
 };
 
-// -------------------- Main Retrieval Node Component --------------------
-
+// --------------- Main Retrieval Node ---------------
 interface RetrievalNodeProps {
   data: {
     title?: string;
@@ -502,6 +301,7 @@ interface RetrievalNodeProps {
 const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
   const nodeDefaultTitle = "Retrieval Node";
   const nodeIcon = "🔍";
+
   const setDataPropsForNode = useStore((s) => s.setDataPropsForNode);
   const pingOutputNodes = useStore((s) => s.pingOutputNodes);
 
@@ -510,86 +310,145 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
     data.methods || [],
   );
   const [results, setResults] = useState<RetrievalResults>(data.results || {});
-  const [loading, setLoading] = useState<boolean>(false);
+  const [loading, setLoading] = useState(false);
 
-  const inspectorModalRef = useRef<ChunkInspectorModalRef>(null);
+  // We'll keep LLMResponse array for the inspector
+  const [jsonResponses, setJsonResponses] = useState<LLMResponse[]>([]);
 
-  // Clear existing results if refresh is triggered
+  // The inspector modal ref
+  const inspectorModalRef = useRef<LLMResponseInspectorModalRef>(null);
+
+  // If the user triggers refresh from outside
   useEffect(() => {
     if (data.refresh) {
       setDataPropsForNode(id, { refresh: false, results: {} });
       setResults({});
+      setJsonResponses([]);
     }
   }, [data.refresh, id, setDataPropsForNode]);
 
-  // Fired whenever the user changes retrieval methods
-  const handleMethodsChange = useCallback(
-    (newItems: RetrievalMethodSpec[]) => {
-      setMethodItems(newItems);
-      // Remove any old result items that no longer match
-      setResults((prevResults) => {
-        const updated = { ...prevResults };
-        Object.keys(updated).forEach((key) => {
-          if (!newItems.some((item) => item.key === key)) {
-            delete updated[key];
-          }
-        });
-        return updated;
+  // If the user changes retrieval methods
+  const handleMethodsChange = useCallback((newItems: RetrievalMethodSpec[]) => {
+    setMethodItems(newItems);
+    // Remove old results that no longer match
+    setResults((prev) => {
+      const updated = { ...prev };
+      Object.keys(updated).forEach((k) => {
+        if (!newItems.some((it) => it.key === k)) {
+          delete updated[k];
+        }
       });
-    },
-    [setMethodItems, setResults],
-  );
+      return updated;
+    });
+    // Clear old inspector data
+    setJsonResponses([]);
+  }, []);
 
   // Flatten & deduplicate final retrieved chunks
-  const prepareOutput = (resultsData: RetrievalResults): RetrievalChunk[] => {
+  const prepareOutput = useCallback((resultsData: RetrievalResults) => {
     const allChunks: RetrievalChunk[] = [];
-    Object.values(resultsData).forEach((methodResult) => {
-      allChunks.push(...methodResult.retrieved);
+    Object.values(resultsData).forEach((methodObj) => {
+      allChunks.push(...methodObj.retrieved);
     });
-    // Sort descending by similarity
+
+    // Sort by similarity
     allChunks.sort((a, b) => b.similarity - a.similarity);
 
+    // Déduplication par chunkId pour éviter les doublons
     const seen = new Set<string>();
-    return allChunks.filter((chunk) => {
-      if (seen.has(chunk.text)) return false;
-      seen.add(chunk.text);
-      return true;
+    return allChunks
+      .filter((ch) => {
+        if (ch.chunkId && seen.has(ch.chunkId)) return false;
+        if (ch.chunkId) seen.add(ch.chunkId);
+        return true;
+      })
+      .map((chunk) => ({
+        text: chunk.text,
+        similarity: chunk.similarity,
+        chunkId: chunk.chunkId || "No ID",
+      }));
+  }, []);
+
+  const buildLLMResponses = (resultsData: RetrievalResults): LLMResponse[] => {
+    const arr: LLMResponse[] = [];
+
+    Object.entries(resultsData).forEach(([methodKey, methodObj]) => {
+      const methodLabel = methodObj.label; // e.g. "BM25" or "Cosine Similarity"
+      // slice to top 5 if desired
+      const topFive = methodObj.retrieved.slice(0, 5);
+
+      topFive.forEach((chunk, idx) => {
+        const cUid = chunk.chunkId || `retrieved_${methodKey}_${idx}`;
+
+        arr.push({
+          uid: cUid,
+          prompt: `Retrieved by: ${methodLabel}`,
+          vars: {
+            similarity: chunk.similarity.toFixed(3),
+            docTitle: chunk.docTitle || "Untitled",
+            chunkId: chunk.chunkId || "",
+            chunkMethod: chunk.chunkMethod || "",
+          },
+          responses: [`[Chunk ID: ${cUid}]\n${chunk.text}`],
+          llm: methodLabel,
+          metavars: {
+            retrievalMethod: methodLabel,
+            docTitle: chunk.docTitle,
+            chunkId: chunk.chunkId,
+            chunkMethod: chunk.chunkMethod,
+            similarity: chunk.similarity,
+          },
+        });
+      });
     });
+
+    return arr;
   };
 
-  // The main action that queries your backend for retrieval
+  // The main retrieval function
   const runRetrieval = useCallback(async () => {
     if (!query.trim()) {
       alert("Please enter a search query.");
       return;
     }
-    let upstreamData: { text?: Array<{ text: string }> } = {};
+
+    // Pull data from chunking node
+    let upstreamData: { fields?: Array<any> } = {};
     try {
-      // Attempt to pull input data from connected nodes
-      upstreamData = useStore.getState().pullInputData(["text"], id) as {
-        text?: Array<{ text: string }>;
+      upstreamData = useStore.getState().pullInputData(["fields"], id) as {
+        fields?: Array<any>;
       };
     } catch (error) {
-      alert("No input text found. Is an UploadNode or ChunkingNode connected?");
-      return;
-    }
-    const texts = upstreamData.text || [];
-    if (texts.length === 0) {
-      alert("No text found in upstream node.");
+      alert("No upstream fields found. Connect a ChunkingNode first.");
       return;
     }
 
-    const newResults: RetrievalResults = {};
+    const chunkArr = upstreamData.fields || [];
+    if (chunkArr.length === 0) {
+      alert("No chunk data found from upstream node.");
+      return;
+    }
+
     setLoading(true);
+    const newResults: RetrievalResults = {};
 
     for (const method of methodItems) {
       const payload: any = {
         query,
-        chunks: texts.map((t) => t.text || ""),
-        top_k: 5,
+        top_k: 10, // request up to 10 from server
+        chunks: chunkArr.map((chunk) => ({
+          text: chunk.text,
+          docTitle:
+            chunk.fill_history?.docTitle || chunk.metavars?.docTitle || "",
+          chunkId: chunk.fill_history?.chunkId || chunk.metavars?.chunkId || "",
+          chunkMethod:
+            chunk.fill_history?.chunkMethod ||
+            chunk.metavars?.chunkMethod ||
+            "",
+        })),
       };
 
-      // Distinguish vector-based vs. keyword-based
+      // Distinguish vector-based from keyword-based
       if (method.needsVector) {
         payload.library = method.vectorLib || "HuggingFace Transformers";
         payload.type = "vectorization";
@@ -603,7 +462,7 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
             payload.library = "TF-IDF";
             break;
           case "boolean":
-            payload.library = "Boolean Search";
+            payload.library = "BooleanSearch";
             break;
           case "overlap":
             payload.library = "KeywordOverlap";
@@ -615,44 +474,70 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
       }
 
       try {
-        const res = await fetch("http://localhost:5000/retrieve", {
+        const resp = await fetch("http://localhost:5000/retrieve", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
-        if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || "Retrieval request failed");
+        if (!resp.ok) {
+          const errData = await resp.json();
+          throw new Error(errData.error || "Retrieval request failed");
         }
-        const json = await res.json();
+        const json = await resp.json();
+
+        // method.methodName => e.g. "BM25"
+        // If method.needsVector => method.vectorLib => e.g. "HuggingFace Transformers"
         const label =
           method.methodName +
           (method.needsVector && method.vectorLib
             ? ` (${method.vectorLib})`
             : "");
-        newResults[method.key] = { label, retrieved: json.retrieved };
+
+        // Force-slice to top 5
+        json.retrieved = json.retrieved.slice(0, 5);
+
+        newResults[method.key] = {
+          label,
+          retrieved: json.retrieved,
+        };
       } catch (err: any) {
-        console.error(`Error with method ${method.methodName}:`, err);
-        alert(`Retrieval failed for ${method.methodName}: ${err.message}`);
+        console.error(`Error retrieving for ${method.methodName}:`, err);
+        alert(`Retrieval failed: ${err.message}`);
       }
     }
 
-    const outputChunks = prepareOutput(newResults);
+    // Flatten & deduplicate for node output
+    const deduped = prepareOutput(newResults);
     setResults(newResults);
 
-    // Persist to node data
+    // Build LLMResponse array for inspector
+    const newLLMResponses = buildLLMResponses(newResults);
+    setJsonResponses(newLLMResponses);
+
+    // Save node data
     setDataPropsForNode(id, {
       query,
       methods: methodItems,
       results: newResults,
-      output: outputChunks,
+      output: deduped.map((chunk) => ({
+        text: chunk.text,
+        similarity: chunk.similarity,
+        chunkId: chunk.chunkId,
+      })),
     });
-
     pingOutputNodes(id);
     setLoading(false);
-  }, [query, methodItems, id, setDataPropsForNode, pingOutputNodes]);
+  }, [
+    query,
+    methodItems,
+    id,
+    setDataPropsForNode,
+    pingOutputNodes,
+    buildLLMResponses,
+    prepareOutput,
+  ]);
 
-  // Persist whenever query/methodItems/results changes
+  // Keep node data in sync
   useEffect(() => {
     setDataPropsForNode(id, { query, methods: methodItems, results });
   }, [id, query, methodItems, results, setDataPropsForNode]);
@@ -661,16 +546,11 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
     <BaseNode
       nodeId={id}
       classNames="retrieval-node"
-      style={{ backgroundColor: "rgba(255, 255, 255, 0.9)" }}
+      style={{ backgroundColor: "rgba(255,255,255,0.9)" }}
     >
-      <Handle
-        type="target"
-        position={Position.Left}
-        id="text"
-        style={{ top: "50%" }}
-      />
+      {/* Input from chunking node */}
+      <Handle type="target" position={Position.Left} id="fields" />
 
-      {/* Node label with your run button */}
       <NodeLabel
         title={data.title || nodeDefaultTitle}
         nodeId={id}
@@ -690,12 +570,13 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
           onChange={(e) => setQuery(e.currentTarget.value)}
           mb="sm"
         />
-        {/* Our new multi-level menu container */}
+
         <RetrievalMethodListContainer
           initMethodItems={methodItems}
           onItemsChange={handleMethodsChange}
         />
       </div>
+
       <InspectFooter
         onClick={() => inspectorModalRef.current?.trigger()}
         showDrawerButton={false}
@@ -703,33 +584,16 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
           // Do nothing
         }}
         isDrawerOpen={false}
-        label={
-          <>
-            Inspect responses <IconSearch size="12pt" />
-          </>
-        }
       />
 
-      <Handle
-        type="source"
-        position={Position.Right}
-        id="output"
-        style={{ top: "50%" }}
-      />
+      <Handle type="source" position={Position.Right} id="output" />
 
-      <Suspense fallback={null}>
-        <ChunkInspectorModal ref={inspectorModalRef} results={results} />
-      </Suspense>
-      <Handle
-        type="source"
-        position={Position.Right}
-        id="output"
-        style={{ top: "50%" }}
-      />
-
-      <Suspense fallback={null}>
-        <ChunkInspectorModal ref={inspectorModalRef} results={results} />
-      </Suspense>
+      <React.Suspense fallback={null}>
+        <LLMResponseInspectorModal
+          ref={inspectorModalRef}
+          jsonResponses={jsonResponses}
+        />
+      </React.Suspense>
     </BaseNode>
   );
 };

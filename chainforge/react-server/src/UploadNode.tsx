@@ -27,8 +27,7 @@ import { AlertModalContext } from "./AlertModal";
 import { Status } from "./StatusIndicatorComponent";
 import { TemplateVarInfo } from "./backend/typing";
 
-// Define the properties for the UploadNode component
-export interface UploadNodeProps {
+interface UploadNodeProps {
   data: {
     title: string;
     fields: TemplateVarInfo[];
@@ -42,12 +41,15 @@ const UploadNode: React.FC<UploadNodeProps> = ({ data, id, type }) => {
   const nodeIcon = useMemo(() => "📁", []);
   const nodeDefaultTitle = useMemo(() => "Upload Node", []);
   const setDataPropsForNode = useStore((state) => state.setDataPropsForNode);
+
   const [fields, setFields] = useState<TemplateVarInfo[]>(data.fields || []);
   const [status, setStatus] = useState<Status>(Status.READY);
+
   const [
     fileListModalOpened,
     { open: openFileListModal, close: closeFileListModal },
   ] = useDisclosure(false);
+
   const showAlert = useContext(AlertModalContext);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -76,46 +78,36 @@ const UploadNode: React.FC<UploadNodeProps> = ({ data, id, type }) => {
           const json = await res.json();
           const textContent = json.text || "";
 
-          // Add filename to the output along with the text content
+          // Add filename + text content as a new TemplateVarInfo
           updatedFields.push({
             text: textContent,
             prompt: "",
             fill_history: {},
-            llm: {
-              name: "None",
-              emoji: "",
-              base_model: "",
-              model: "",
-              temp: 0,
-            },
+            llm: undefined,
             metavars: {
               size: file.size.toString(),
               type: file.type,
-              filename: file.name,
+              filename: file.name, // important: store doc name
               id: uuid(),
             },
           });
         } catch (error: any) {
           console.error("Error uploading file:", error);
-          showAlert &&
-            showAlert(`Error uploading ${file.name}: ${error.message}`);
+          showAlert?.(`Error uploading ${file.name}: ${error.message}`);
           setStatus(Status.ERROR);
         }
       }
 
       setFields(updatedFields);
-      // Here we modify the output to include the filename:
-      const outputFields = updatedFields.map((field) => ({
-        text: field.text,
-        filename: field.metavars?.filename || "Untitled file",
-      }));
-      setDataPropsForNode(id, { fields: updatedFields, output: outputFields });
+
+      // Also set the node's output for the flow
+      setDataPropsForNode(id, { fields: updatedFields, output: updatedFields });
       setStatus(Status.READY);
     },
     [fields, id, setDataPropsForNode, showAlert],
   );
 
-  // Handle file input change event
+  // On file input change
   const handleFileInputChange = (
     event: React.ChangeEvent<HTMLInputElement>,
   ) => {
@@ -125,45 +117,38 @@ const UploadNode: React.FC<UploadNodeProps> = ({ data, id, type }) => {
     }
   };
 
-  // Handle file drop event
+  // Drag & drop
   const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     if (event.dataTransfer.files) {
       handleFilesUpload(event.dataTransfer.files);
     }
   };
-
-  // Handle drag over event
   const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
   };
 
-  // Remove a specific file from the list
+  // Remove a file
   const handleRemoveFile = (index: number) => {
     const updatedFields = fields.filter((_, i) => i !== index);
     setFields(updatedFields);
-    // Update output accordingly
-    const outputFields = updatedFields.map((field) => ({
-      text: field.text,
-      filename: field.metavars?.filename || "Untitled file",
-    }));
-    setDataPropsForNode(id, { fields: updatedFields, output: outputFields });
+    setDataPropsForNode(id, { fields: updatedFields, output: updatedFields });
   };
 
-  // Clear all uploaded files
+  // Clear all
   const handleClearUploads = useCallback(() => {
     setFields([]);
     setDataPropsForNode(id, { fields: [], output: [] });
     setStatus(Status.READY);
   }, [id, setDataPropsForNode]);
 
-  // Effect to handle refresh
+  // Refresh logic
   useEffect(() => {
     if (data.refresh) {
       handleClearUploads();
       setDataPropsForNode(id, { refresh: false });
     }
-  }, [data.refresh, id, setDataPropsForNode, handleClearUploads]);
+  }, [data.refresh, handleClearUploads, id, setDataPropsForNode]);
 
   return (
     <BaseNode classNames="upload-node" nodeId={id}>
@@ -217,7 +202,6 @@ const UploadNode: React.FC<UploadNodeProps> = ({ data, id, type }) => {
         type="source"
         position={Position.Right}
         id="text"
-        className="grouped-handle"
         style={{ top: "50%" }}
       />
 
@@ -227,44 +211,33 @@ const UploadNode: React.FC<UploadNodeProps> = ({ data, id, type }) => {
         opened={fileListModalOpened}
         onClose={closeFileListModal}
       >
-        <Box>
-          {fields.length === 0 ? (
-            <Text color="dimmed">No files uploaded.</Text>
-          ) : (
-            <List spacing="xs" size="sm" center>
-              {fields.map((field, index) => (
-                <List.Item key={field.metavars?.id || index}>
-                  <Group position="apart">
-                    <Group>
-                      <ThemeIcon color="blue" variant="light">
-                        <IconUpload size={16} />
-                      </ThemeIcon>
-                      <div>
-                        <Text size="sm" weight={500}>
-                          {field.metavars?.filename || "Untitled file"}
-                        </Text>
-                        {field.text && (
-                          <Text size="xs" color="dimmed">
-                            {field.text.substring(0, 50)}
-                            {field.text.length > 50 ? "..." : ""}
-                          </Text>
-                        )}
-                      </div>
-                    </Group>
-                    <Button
-                      variant="subtle"
-                      color="red"
-                      compact
-                      onClick={() => handleRemoveFile(index)}
-                    >
-                      Remove
-                    </Button>
-                  </Group>
-                </List.Item>
-              ))}
-            </List>
-          )}
-        </Box>
+        {fields.length === 0 ? (
+          <Text color="dimmed">No files uploaded.</Text>
+        ) : (
+          fields.map((field, index) => (
+            <Group position="apart" mb="xs" key={field.metavars?.id}>
+              <div>
+                <Text size="sm" weight={500}>
+                  {field.metavars?.filename || "Untitled file"}
+                </Text>
+                {field.text && (
+                  <Text size="xs" color="dimmed">
+                    {field.text.slice(0, 50)}
+                    {field.text.length > 50 ? "..." : ""}
+                  </Text>
+                )}
+              </div>
+              <Button
+                variant="subtle"
+                color="red"
+                size="xs"
+                onClick={() => handleRemoveFile(index)}
+              >
+                <IconTrash size="14" />
+              </Button>
+            </Group>
+          ))
+        )}
       </Modal>
     </BaseNode>
   );

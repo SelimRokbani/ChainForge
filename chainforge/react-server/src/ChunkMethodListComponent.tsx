@@ -123,27 +123,21 @@ const ChunkMethodListItem: React.FC<{
   onRemove: (key: string) => void;
   onSettingsUpdate: (key: string, newSettings: any) => void;
 }> = ({ methodItem, onRemove, onSettingsUpdate }) => {
-  const schemaEntry = ChunkMethodSchemas[methodItem.baseMethod];
-  const { schema, uiSchema, description, fullName } = schemaEntry || {
+  // Fetch the relevant schema
+  const schemaEntry = ChunkMethodSchemas[methodItem.baseMethod] || {
     schema: {},
     uiSchema: {},
     description: "",
     fullName: "",
   };
+  const { schema, uiSchema, fullName, description } = schemaEntry;
 
   const [settingsModalOpen, { open, close }] = useDisclosure(false);
-
-  const handleFormChange = useCallback(
-    (evt: any) => {
-      onSettingsUpdate(methodItem.key, evt.formData);
-    },
-    [methodItem.key, onSettingsUpdate],
-  );
 
   return (
     <Card shadow="sm" p="sm" withBorder mt="xs">
       <Group position="apart" align="center">
-        <div style={{ maxWidth: "70%" }}>
+        <div>
           <Text size="sm" weight={600}>
             {methodItem.emoji ? methodItem.emoji + " " : ""}
             {methodItem.methodName} ({methodItem.library})
@@ -160,6 +154,7 @@ const ChunkMethodListItem: React.FC<{
             color="red"
             variant="subtle"
             onClick={() => onRemove(methodItem.key)}
+            title="Remove this method"
           >
             <IconTrash size={16} />
           </ActionIcon>
@@ -177,7 +172,7 @@ const ChunkMethodListItem: React.FC<{
             schema={schema}
             uiSchema={uiSchema}
             formData={methodItem.settings}
-            onChange={handleFormChange}
+            onChange={(evt) => onSettingsUpdate(methodItem.key, evt.formData)}
             validator={validator as any}
             liveValidate
             noHtml5Validate
@@ -212,7 +207,7 @@ const ChunkMethodListContainer = forwardRef<
     [props.onItemsChange],
   );
 
-  // Remove
+  // Remove method
   const handleRemoveMethod = useCallback(
     (key: string) => {
       const newItems = methodItems.filter((m) => m.key !== key);
@@ -226,9 +221,7 @@ const ChunkMethodListContainer = forwardRef<
   const handleSettingsUpdate = useCallback(
     (key: string, newSettings: any) => {
       const newItems = methodItems.map((m) =>
-        m.key === key
-          ? { ...m, settings: { ...m.settings, ...newSettings } }
-          : m,
+        m.key === key ? { ...m, settings: newSettings } : m,
       );
       setMethodItems(newItems);
       notifyItemsChanged(newItems);

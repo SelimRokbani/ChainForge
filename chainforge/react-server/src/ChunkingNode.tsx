@@ -1,5 +1,3 @@
-// ChunkingNode.tsx
-
 import React, {
   useState,
   useEffect,
@@ -53,9 +51,9 @@ const ChunkingNode: React.FC<ChunkingNodeProps> = ({ data, id }) => {
   const [status, setStatus] = useState<Status>(Status.NONE);
   const [jsonResponses, setJSONResponses] = useState<LLMResponse[]>([]);
 
-  // Reference to the inspector modal
   const inspectorRef = useRef<LLMResponseInspectorModalRef>(null);
 
+  // On refresh
   useEffect(() => {
     if (data.refresh) {
       setDataPropsForNode(id, { refresh: false, fields: [], output: [] });
@@ -64,7 +62,7 @@ const ChunkingNode: React.FC<ChunkingNodeProps> = ({ data, id }) => {
     }
   }, [data.refresh, id, setDataPropsForNode]);
 
-  // Track changes to the selected chunk methods
+  // Track changes in chunk methods
   const handleMethodItemsChange = useCallback(
     (newItems: ChunkMethodSpec[], _oldItems: ChunkMethodSpec[]) => {
       setMethodItems(newItems);
@@ -74,6 +72,13 @@ const ChunkingNode: React.FC<ChunkingNodeProps> = ({ data, id }) => {
     [id, status, setDataPropsForNode],
   );
 
+  // Truncate string helper
+  const truncateString = (str: string, maxLen = 25): string => {
+    if (!str) return "";
+    if (str.length <= maxLen) return str;
+    return `${str.slice(0, 12)}...${str.slice(-10)}`;
+  };
+
   // The main chunking function
   const runChunking = useCallback(async () => {
     if (methodItems.length === 0) {
@@ -81,7 +86,7 @@ const ChunkingNode: React.FC<ChunkingNodeProps> = ({ data, id }) => {
       return;
     }
 
-    // Pull text from upstream
+    // 1) Pull text from upstream (the UploadNode)
     let inputData: { text?: TemplateVarInfo[] } = {};
     try {
       inputData = pullInputData(["text"], id) as { text?: TemplateVarInfo[] };
@@ -101,6 +106,7 @@ const ChunkingNode: React.FC<ChunkingNodeProps> = ({ data, id }) => {
     setStatus(Status.LOADING);
     setJSONResponses([]);
 
+    // We'll group by library to call your chunker
     const allChunksByLibrary: Record<string, TemplateVarInfo[]> = {};
     const allResponsesByLibrary: Record<string, LLMResponse[]> = {};
 
@@ -114,7 +120,7 @@ const ChunkingNode: React.FC<ChunkingNodeProps> = ({ data, id }) => {
       {} as Record<string, ChunkMethodSpec[]>,
     );
 
-    // Process each library group
+    // 2) For each library and each doc
     for (const [library, methods] of Object.entries(methodsByLibrary)) {
       allChunksByLibrary[library] = [];
       allResponsesByLibrary[library] = [];
@@ -147,13 +153,25 @@ const ChunkingNode: React.FC<ChunkingNodeProps> = ({ data, id }) => {
             const json = await res.json();
             const chunks = json.chunks as string[];
 
-            for (const cText of chunks) {
-              const cId = uuid();
+            // We'll build chunk IDs for each doc
+            const docTitleSafe = docTitle.replace(/\W+/g, "_");
+            const methodSafe = method.methodName.replace(/\W+/g, "_");
+            const libSafe = library.replace(/\W+/g, "_");
+
+            chunks.forEach((cText, index) => {
+              const cId = `${methodSafe}_${index}_${libSafe}`;
+              // const cId = `${methodSafe}_${index}_${libSafe}_${docTitleSafe}`;
+              // const cId = `chunk_${index}`;
+
+              // Create the chunk object
               const chunkVar: TemplateVarInfo = {
                 text: cText,
                 prompt: "",
                 fill_history: {
-                  chunkMethod: method.methodName + " (" + method.library + ")",
+                  chunkMethod: `${method.methodName} (${method.library})`,
+                  docTitle,
+                  chunkLibrary: library,
+                  chunkId: cId,
                 },
                 llm: undefined,
                 metavars: {
@@ -165,17 +183,18 @@ const ChunkingNode: React.FC<ChunkingNodeProps> = ({ data, id }) => {
 
               allChunksByLibrary[library].push(chunkVar);
 
+              // LLMResponse for inspector
               const respObj: LLMResponse = {
                 uid: cId,
-                prompt: `Doc: ${docTitle}`,
-                vars: { chunkMethod: method.methodName },
-                responses: [cText],
+                prompt: `Doc: ${docTitle} | Chunk ID: ${truncateString(cId, 25)}`,
+                vars: {},
+                responses: [`[Chunk ID: ${cId}]\n${cText}`],
                 llm: method.library,
                 metavars: chunkVar.metavars || {},
               };
 
               allResponsesByLibrary[library].push(respObj);
-            }
+            });
           } catch (err: any) {
             console.error(err);
             showAlert?.(
@@ -190,13 +209,13 @@ const ChunkingNode: React.FC<ChunkingNodeProps> = ({ data, id }) => {
     const allChunks = Object.values(allChunksByLibrary).flat();
     const allResponses = Object.values(allResponsesByLibrary).flat();
 
-    // Output data grouped by library
+    // 3) Output data grouped by library
     const groupedOutput = Object.entries(allChunksByLibrary).reduce(
       (acc, [lib, chunks]) => {
         acc[lib] = chunks.map((ch) => ({
           id: ch.metavars?.chunkId,
           docTitle: ch.metavars?.docTitle,
-          method: ch.metavars?.chunkMethod,
+          method: ch.fill_history?.chunkMethod,
           text: ch.text,
         }));
         return acc;
@@ -221,7 +240,7 @@ const ChunkingNode: React.FC<ChunkingNodeProps> = ({ data, id }) => {
     pingOutputNodes,
   ]);
 
-  // Open the modal if we have chunked responses
+  // Open inspector
   const openInspector = () => {
     if (jsonResponses.length > 0 && inspectorRef.current) {
       inspectorRef.current.trigger();
@@ -265,6 +284,7 @@ const ChunkingNode: React.FC<ChunkingNodeProps> = ({ data, id }) => {
         }
       />
 
+      {/* The LLM Response Inspector */}
       <LLMResponseInspectorModal
         ref={inspectorRef}
         jsonResponses={jsonResponses}
