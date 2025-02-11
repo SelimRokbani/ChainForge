@@ -4,7 +4,7 @@ from flask_cors import CORS
 import nltk
 import spacy
 import io
-import fitz  
+import fitz
 from docx import Document
 import cohere
 import gensim
@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 import logging
 import math
 import tempfile
+import openai
 
 # For Retrieval Methods
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -26,18 +27,12 @@ from whoosh import index
 from whoosh.fields import Schema, TEXT, ID
 from whoosh.qparser import QueryParser
 
-# Load environment variables
 load_dotenv()
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 nltk.download("punkt")
-from transformers import AutoTokenizer
-
-huggingface_tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
-# Load spaCy model
 try:
     nlp = spacy.load("en_core_web_sm")
     logger.info("Loaded spaCy model 'en_core_web_sm'.")
@@ -47,7 +42,6 @@ except OSError:
     nlp = spacy.load("en_core_web_sm")
     logger.info("Downloaded and loaded spaCy model 'en_core_web_sm'.")
 
-# Initialize Cohere client securely
 COHERE_API_KEY = os.getenv("COHERE_API_KEY", "")
 if COHERE_API_KEY:
     co = cohere.Client(COHERE_API_KEY)
@@ -56,325 +50,206 @@ else:
     co = None
     logger.warning("Cohere API key not found. Cohere-based chunking methods unavailable.")
 
+openai.api_key = os.getenv("OPENAI_API_KEY", "")
+if not openai.api_key:
+    logger.warning("OpenAI API key not found. OpenAI-based embeddings will fail unless you set OPENAI_API_KEY.")
+
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-# -------------------- Text Extraction --------------------
-
-# A helper function to extract text from PDF files
+# -------------------- File Extraction Helpers --------------------
 def extract_text_from_pdf(file_bytes):
     try:
         text = ""
         with fitz.open(stream=file_bytes, filetype="pdf") as doc:
             for page in doc:
                 text += page.get_text()
-        logger.info("Extracted text from PDF.")
         return text
     except Exception as e:
         logger.error(f"Error extracting text from PDF: {e}")
         raise
 
-# A helper function to extract text from DOCX files
 def extract_text_from_docx(file_bytes):
     try:
         file_stream = io.BytesIO(file_bytes)
         doc = Document(file_stream)
         full_text = [para.text for para in doc.paragraphs]
-        text = "\n".join(full_text)
-        logger.info("Extracted text from DOCX.")
-        return text
+        return "\n".join(full_text)
     except Exception as e:
         logger.error(f"Error extracting text from DOCX: {e}")
         raise
 
-# A helper function to extract text from TXT files
 def extract_text_from_txt(file_bytes):
     try:
-        text = file_bytes.decode("utf-8", errors="ignore")
-        logger.info("Extracted text from TXT.")
-        return text
+        return file_bytes.decode("utf-8", errors="ignore")
     except Exception as e:
         logger.error(f"Error extracting text from TXT: {e}")
         raise
 
-# -------------- Chunking Methods --------------
+# -------------------- Chunking Methods --------------------
+from transformers import AutoTokenizer
+huggingface_tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
 
 def overlapping_langchain_textsplitter(text, chunk_size=200, chunk_overlap=50, keep_separator=True):
-    try:
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size, chunk_overlap=chunk_overlap, keep_separator=keep_separator
-        )
-        chunks = splitter.split_text(text)
-        if not chunks:
-            logger.warning("LangChain's TextSplitter produced no chunks.")
-            return [text]
-        logger.info(f"LangChain's TextSplitter produced {len(chunks)} chunks.")
-        return chunks
-    except Exception as e:
-        logger.error(f"LangChain's TextSplitter failed: {e}")
-        return [text]
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size, chunk_overlap=chunk_overlap, keep_separator=keep_separator
+    )
+    chunks = splitter.split_text(text)
+    return chunks if chunks else [text]
 
 def overlapping_openai_tiktoken(text, chunk_size=200, chunk_overlap=50):
-    try:
-        import tiktoken
-        enc = tiktoken.encoding_for_model("gpt-3.5-turbo")  
+    import tiktoken
+    enc = tiktoken.encoding_for_model("gpt-3.5-turbo")
+    tokens = enc.encode(text)
+    result = []
+    start = 0
+    while start < len(tokens):
+        end = start + chunk_size
+        chunk = enc.decode(tokens[start:end])
+        result.append(chunk)
+        start = end - chunk_overlap
+        if start < 0:
+            start = 0
+        if end >= len(tokens):
+            break
+    return result if result else [text]
 
-        tokens = enc.encode(text)
-        chunks = []
-        start = 0
-        while start < len(tokens):
-            end = start + chunk_size
-            chunk = enc.decode(tokens[start:end])
-            chunks.append(chunk)
-            start = end - chunk_overlap
-            if start < 0:
-                start = 0
-            if end >= len(tokens):
-                break
-        if not chunks:
-            logger.warning("OpenAI tiktoken produced no chunks.")
-            return [text]
-        logger.info(f"OpenAI tiktoken produced {len(chunks)} chunks.")
-        return chunks
-    except Exception as e:
-        logger.error(f"OpenAI tiktoken chunking failed: {e}")
-        return [text]
-    
 def overlapping_huggingface_tokenizers(text, chunk_size=200, chunk_overlap=50):
-    try:
-        tokens = huggingface_tokenizer.encode(text)
-        chunks = []
-        start = 0
-        while start < len(tokens):
-            end = start + chunk_size
-            chunk = huggingface_tokenizer.decode(tokens[start:end], skip_special_tokens=True)
-            chunks.append(chunk)
-            start = end - chunk_overlap
-            if start < 0:
-                start = 0
-            if end >= len(tokens):
-                break
-        if not chunks:
-            logger.warning("HuggingFace Tokenizers produced no chunks.")
-            return [text]
-        logger.info(f"HuggingFace Tokenizers produced {len(chunks)} chunks.")
-        return chunks
-    except Exception as e:
-        logger.error(f"HuggingFace Tokenizers chunking failed: {e}")
-        return [text]
-    
+    tokens = huggingface_tokenizer.encode(text)
+    result = []
+    start = 0
+    while start < len(tokens):
+        end = start + chunk_size
+        chunk = huggingface_tokenizer.decode(tokens[start:end], skip_special_tokens=True)
+        result.append(chunk)
+        start = end - chunk_overlap
+        if start < 0:
+            start = 0
+        if end >= len(tokens):
+            break
+    return result if result else [text]
+
 def syntax_spacy(text):
-    try:
-        doc = nlp.pipe([text])  
-        chunks = [s.text.strip() for doc_chunk in doc for s in doc_chunk.sents if s.text.strip()]
-        
-        if not chunks:
-            logger.warning("spaCy Sentence Splitter produced no chunks.")
-            return [text]
-        logger.info(f"spaCy Sentence Splitter produced {len(chunks)} chunks.")
-        return chunks
-    except Exception as e:
-        logger.error(f"spaCy Sentence Splitter failed: {e}")
-        return [text]
+    doc = nlp.pipe([text])
+    sents = []
+    for d in doc:
+        for s in d.sents:
+            sent_text = s.text.strip()
+            if sent_text:
+                sents.append(sent_text)
+    return sents if sents else [text]
 
 def syntax_texttiling(text):
-    try:
-        from nltk.tokenize import TextTilingTokenizer
-        tt = TextTilingTokenizer()
-        chunks = tt.tokenize(text)
-        if not chunks:
-            logger.warning("TextTilingTokenizer produced no chunks.")
-            return [text]
-        logger.info(f"TextTilingTokenizer produced {len(chunks)} chunks.")
-        return chunks
-    except Exception as e:
-        logger.error(f"TextTilingTokenizer failed: {e}")
-        return [text]
+    from nltk.tokenize import TextTilingTokenizer
+    tt = TextTilingTokenizer()
+    chunks = tt.tokenize(text)
+    return chunks if chunks else [text]
 
 def hybrid_texttiling_spacy(text, chunk_size=300, chunk_overlap=100):
-    try:
-        from nltk.tokenize import TextTilingTokenizer
-        tt = TextTilingTokenizer()
-        sem_chunks = tt.tokenize(text)
-
-        if not sem_chunks:
-            logger.warning("TextTiling failed. Falling back to spaCy.")
-            sem_chunks = [text]
-
-        logger.info(f"TextTiling produced {len(sem_chunks)} chunks.")
-
-        final_chunks = []
-        for chunk in sem_chunks:
-            doc = nlp(chunk)
-            sentences = [sent.text.strip() for sent in doc.sents if sent.text.strip()]
-
-            temp_chunk = []
-            current_size = 0
-            for sentence in sentences:
-                sentence_size = len(sentence)
-                if current_size + sentence_size > chunk_size:
-                    final_chunks.append(" ".join(temp_chunk))
-                    temp_chunk = temp_chunk[-chunk_overlap:] + [sentence]  # Rolling overlap fix
-                    current_size = sum(len(s) for s in temp_chunk)
-                else:
-                    temp_chunk.append(sentence)
-                    current_size += sentence_size
-
-            if temp_chunk:
-                final_chunks.append(" ".join(temp_chunk))
-
-        if not final_chunks:
-            logger.warning("Hybrid TextTiling + spaCy produced no chunks.")
-            return [text]
-
-        logger.info(f"Hybrid TextTiling + spaCy produced {len(final_chunks)} refined chunks.")
-        return final_chunks
-
-    except Exception as e:
-        logger.error(f"Hybrid TextTiling + spaCy failed: {e}")
-        return [text]
-    
+    from nltk.tokenize import TextTilingTokenizer
+    tt = TextTilingTokenizer()
+    sem_chunks = tt.tokenize(text) or [text]
+    final_chunks = []
+    for chunk in sem_chunks:
+        doc = nlp(chunk)
+        sentences = [s.text.strip() for s in doc.sents if s.text.strip()]
+        buf = []
+        current_size = 0
+        for sentence in sentences:
+            if current_size + len(sentence) > chunk_size:
+                final_chunks.append(" ".join(buf))
+                buf = buf[-chunk_overlap:] + [sentence]
+                current_size = sum(len(x) for x in buf)
+            else:
+                buf.append(sentence)
+                current_size += len(sentence)
+        if buf:
+            final_chunks.append(" ".join(buf))
+    return final_chunks if final_chunks else [text]
 
 def semantic_bertopic(text, n_topics=2, min_topic_size=1):
-    try:
-        topic_model = BERTopic(n_topics=n_topics, min_topic_size=min_topic_size, random_state=42)
-        sentences = nltk.sent_tokenize(text)
-        
-        topics, probs = topic_model.fit_transform(sentences)
-        clusters = {}
-        
-        for topic, sentence in zip(topics, sentences):
-            if topic == -1:
-                clusters.setdefault("outlier", []).append(sentence)
-            else:
-                clusters.setdefault(topic, []).append(sentence)
-        
-        # Ensure outliers are processed correctly
-        sem_chunks = [" ".join(c) for c in clusters.values()]
-
-        if not sem_chunks:
-            logger.warning("BERTopic produced no semantic chunks.")
-            return [text]
-
-        logger.info(f"BERTopic produced {len(sem_chunks)} semantic chunks.")
-        return sem_chunks
-    except Exception as e:
-        logger.error(f"BERTopic failed: {e}")
+    topic_model = BERTopic(n_topics=n_topics, min_topic_size=min_topic_size, random_state=42)
+    sentences = nltk.sent_tokenize(text)
+    if not sentences:
         return [text]
+    topics = topic_model.fit_transform(sentences)
+    clusters = {}
+    for t, s in zip(topics, sentences):
+        clusters.setdefault(t, []).append(s)
+    return [" ".join(v) for v in clusters.values()] or [text]
 
 def hybrid_bertopic_spacy(text, min_topic_size=2):
-    try:
-        sentences = [s.text.strip() for s in nlp(text).sents if s.text.strip()]
-        if not sentences:
-            logger.warning("spaCy did not split the text into any sentences.")
-            return [text]
-        logger.info(f"spaCy produced {len(sentences)} sentences.")
-        topic_model = BERTopic(min_topic_size=min_topic_size, random_state=42)
-        topics, probs = topic_model.fit_transform(sentences)
-        logger.info(f"BERTopic assigned topics: {topics}")
-        clusters = {}
-        for topic, sentence in zip(topics, sentences):
-            if topic == -1:
-                clusters.setdefault("outlier", []).append(sentence)
-            else:
-                clusters.setdefault(topic, []).append(sentence)
-        sem_chunks = [" ".join(cluster) for cluster in clusters.values()]
-        if not sem_chunks:
-            logger.warning("Hybrid BERTopic + spaCy produced no chunks.")
-            return [text]
-        logger.info(f"Hybrid BERTopic + spaCy produced {len(sem_chunks)} chunks.")
-        return sem_chunks
-    except Exception as e:
-        logger.error(f"Hybrid BERTopic + spaCy failed: {e}")
+    sentences = [s.text.strip() for s in nlp(text).sents if s.text.strip()]
+    if not sentences:
         return [text]
+    topic_model = BERTopic(min_topic_size=min_topic_size, random_state=42)
+    topics = topic_model.fit_transform(sentences)
+    clusters = {}
+    for t, s in zip(topics, sentences):
+        clusters.setdefault(t, []).append(s)
+    return [" ".join(v) for v in clusters.values()] or [text]
 
 def hybrid_recursive_gensim(text, chunk_size=300, chunk_overlap=100):
-    try:
-        splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-        sem_chunks = splitter.split_text(text)
-        logger.info(f"Recursive TextSplitter split text into {len(sem_chunks)} semantic chunks.")
-        final_chunks = []
-        for sc in sem_chunks:
-            sentences = nltk.sent_tokenize(sc)
-            processed = [simple_preprocess(sent) for sent in sentences]
-            dictionary = Dictionary(processed)
-            if len(dictionary) == 0:
-                logger.warning("No tokens found after preprocessing in Gensim for a chunk.")
-                continue
-            corpus = [dictionary.doc2bow(doc) for doc in processed]
-            from gensim.models import LdaModel
-            lda = LdaModel(corpus, id2word=dictionary, num_topics=2, passes=10, random_state=42)
-            topic_assignments = []
-            for bow in corpus:
-                topic_probs = lda.get_document_topics(bow)
-                if topic_probs:
-                    dominant_topic = max(topic_probs, key=lambda x: x[1])[0]
-                else:
-                    dominant_topic = 0
-                topic_assignments.append(dominant_topic)
-            clusters = {}
-            for lbl, s in zip(topic_assignments, sentences):
-                clusters.setdefault(lbl, []).append(s)
-            sem_chunks2 = [" ".join(c) for c in clusters.values()]
-            final_chunks.extend(sem_chunks2)
-        if not final_chunks:
-            logger.warning("Hybrid Recursive TextSplitter + Gensim produced no chunks.")
-            return [text]
-        logger.info(f"Hybrid Recursive TextSplitter + Gensim produced {len(final_chunks)} final chunks.")
-        return final_chunks
-    except Exception as e:
-        logger.error(f"Hybrid Recursive TextSplitter + Gensim failed: {e}")
-        return [text]
+    splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    sem_chunks = splitter.split_text(text) or [text]
+    final_chunks = []
+    for sc in sem_chunks:
+        sents = nltk.sent_tokenize(sc)
+        processed = [simple_preprocess(s) for s in sents]
+        dictionary = Dictionary(processed)
+        if len(dictionary) == 0:
+            continue
+        corpus = [dictionary.doc2bow(d) for d in processed]
+        from gensim.models import LdaModel
+        lda = LdaModel(corpus, id2word=dictionary, num_topics=2, passes=10, random_state=42)
+        assignments = []
+        for bow in corpus:
+            topic_probs = lda.get_document_topics(bow)
+            if topic_probs:
+                dominant_topic = max(topic_probs, key=lambda x: x[1])[0]
+            else:
+                dominant_topic = 0
+            assignments.append(dominant_topic)
+        clusters = {}
+        for lbl, st in zip(assignments, sents):
+            clusters.setdefault(lbl, []).append(st)
+        final_chunks.extend([" ".join(val) for val in clusters.values()])
+    return final_chunks if final_chunks else [text]
 
 def hybrid_recursive_cohere(text, chunk_size=300, chunk_overlap=100):
     if not co:
-        logger.error("Cohere client not initialized for hybrid_recursive_cohere.")
         return [text]
-    try:
-        splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-        sem_chunks = splitter.split_text(text)
-        logger.info(f"Recursive TextSplitter split text into {len(sem_chunks)} semantic chunks.")
-        final_chunks = []
-        for sc in sem_chunks:
-            sentences = nltk.sent_tokenize(sc)
-            embeddings = co.embed(texts=sentences).embeddings
-            if not embeddings:
-                logger.warning("No embeddings received from Cohere for a chunk.")
-                continue
-            kmeans = KMeans(n_clusters=2, random_state=42)
-            labels = kmeans.fit_predict(embeddings)
-            clusters = {}
-            for lbl, s in zip(labels, sentences):
-                clusters.setdefault(lbl, []).append(s)
-            sem_chunks2 = [" ".join(c) for c in clusters.values()]
-            final_chunks.extend(sem_chunks2)
-        if not final_chunks:
-            logger.warning("Hybrid Recursive TextSplitter + Cohere produced no chunks.")
-            return [text]
-        logger.info(f"Hybrid Recursive TextSplitter + Cohere produced {len(final_chunks)} final chunks.")
-        return final_chunks
-    except Exception as e:
-        logger.error(f"Hybrid Recursive TextSplitter + Cohere failed: {e}")
-        return [text]
+    splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    sem_chunks = splitter.split_text(text) or [text]
+    final_chunks = []
+    for sc in sem_chunks:
+        sents = nltk.sent_tokenize(sc)
+        if not sents:
+            continue
+        embeddings = co.embed(texts=sents).embeddings
+        kmeans = KMeans(n_clusters=2, random_state=42)
+        labels = kmeans.fit_predict(embeddings)
+        clusters = {}
+        for lbl, st in zip(labels, sents):
+            clusters.setdefault(lbl, []).append(st)
+        final_chunks.extend([" ".join(val) for val in clusters.values()])
+    return final_chunks if final_chunks else [text]
 
 def hybrid_recursive_bertopic(text, chunk_size=300, chunk_overlap=300, n_topics=2, min_topic_size=1):
-    try:
-        splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-        sem_chunks = splitter.split_text(text)
-        logger.info(f"Recursive TextSplitter split text into {len(sem_chunks)} semantic chunks.")
-        final_chunks = []
-        for sc in sem_chunks:
-            topic_model = BERTopic(n_topics=n_topics, min_topic_size=min_topic_size, random_state=42)
-            topics, probs = topic_model.fit_transform(nltk.sent_tokenize(sc))
-            clusters = {}
-            for topic, sentence in zip(topics, nltk.sent_tokenize(sc)):
-                clusters.setdefault(topic, []).append(sentence)
-            sem_chunks2 = [" ".join(c) for c in clusters.values()]
-            final_chunks.extend(sem_chunks2)
-        return final_chunks
-    except Exception as e:
-        logger.error(f"Hybrid Recursive TextSplitter + BERTopic failed: {e}")
-        return [text]
+    splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    sem_chunks = splitter.split_text(text) or [text]
+    final_chunks = []
+    for sc in sem_chunks:
+        sents = nltk.sent_tokenize(sc)
+        if not sents:
+            continue
+        topic_model = BERTopic(n_topics=n_topics, min_topic_size=min_topic_size, random_state=42)
+        topics, probs = topic_model.fit_transform(sents)
+        clusters = {}
+        for t, s0 in zip(topics, sents):
+            clusters.setdefault(t, []).append(s0)
+        final_chunks.extend([" ".join(val) for val in clusters.values()])
+    return final_chunks if final_chunks else [text]
 
 CHUNKING_METHODS = {
     ("Overlapping Chunking", "LangChain's TextSplitter"): overlapping_langchain_textsplitter,
@@ -390,32 +265,30 @@ CHUNKING_METHODS = {
 }
 
 def chunk_text(method_name, library, text, **kwargs):
-    logger.info(f"Chunking called with method='{method_name}', library='{library}', kwargs={kwargs}")
-    chunking_function = CHUNKING_METHODS.get((method_name, library))
-    if not chunking_function:
-        logger.warning(f"No chunking function for method '{method_name}' & library '{library}'. Returning original text.")
+    func = CHUNKING_METHODS.get((method_name, library))
+    if not func:
+        logger.warning(f"No chunking function for method='{method_name}', library='{library}'. Returning full text.")
         return [text]
     try:
-        chunks = chunking_function(text, **kwargs)
-        logger.info(f"'{chunking_function.__name__}' produced {len(chunks)} chunks.")
+        chunks = func(text, **kwargs)
         return chunks
-    except TypeError as e:
-        logger.error(f"TypeError in chunk_text: {e}. Trying to run without kwargs.")
-        try:
-            chunks = chunking_function(text)
-            logger.info(f"'{chunking_function.__name__}' produced {len(chunks)} chunks without kwargs.")
-            return chunks
-        except Exception as ex:
-            logger.error(f"Failed to run chunking function without kwargs: {ex}")
-            return [text]
-    except Exception as e:
-        logger.error(f"Error running chunking function '{chunking_function.__name__}': {e}")
-        return [text]
+    except TypeError:
+        # Fallback if the function doesn't accept all kwargs
+        return func(text)
 
-# -------------- Vectorization & Similarity Helpers --------------
+# -------------------- Vector & Similarity Helpers --------------------
+def cosine_similarity(a, b):
+    dot = sum(x * y for x, y in zip(a, b))
+    normA = math.sqrt(sum(x * x for x in a))
+    normB = math.sqrt(sum(y * y for y in b))
+    return dot / (normA * normB + 1e-10)
 
 def vectorize_texts(library, texts):
-    logger.info(f"vectorize_texts called with library='{library}' and {len(texts)} texts.")
+    """
+    Uniform embedding function that returns the same dimension embeddings
+    for any library: Hugging Face, OpenAI, Cohere, or Sentence Transformers.
+    """
+    logger.info(f"vectorize_texts(library={library}, #texts={len(texts)})")
     try:
         if library == "HuggingFace Transformers":
             from transformers import AutoTokenizer, AutoModel
@@ -431,455 +304,311 @@ def vectorize_texts(library, texts):
                 embeddings.append(emb)
             return embeddings
 
+        elif library == "OpenAI Embeddings":
+            embeddings = []
+            for t in texts:
+                resp = openai.Embedding.create(input=t, model="text-embedding-ada-002")
+                emb = resp["data"][0]["embedding"]
+                embeddings.append(emb)
+            return embeddings
+
+        elif library == "Cohere Embeddings":
+            if not co:
+                raise ValueError("Cohere client not initialized or missing API key.")
+            response = co.embed(texts=texts)
+            return response.embeddings
+
         elif library == "Sentence Transformers":
             from sentence_transformers import SentenceTransformer
             model = SentenceTransformer("all-MiniLM-L6-v2")
             emb = model.encode(texts).tolist()
             return emb
 
-        elif library == "Custom KMeans":
-            from sklearn.feature_extraction.text import TfidfVectorizer
-            from sklearn.decomposition import TruncatedSVD
-            vectorizer = TfidfVectorizer(stop_words="english")
-            tfidf_matrix = vectorizer.fit_transform(texts)
-            logger.info(f"TF-IDF matrix shape: {tfidf_matrix.shape}")
-            n_components = min(tfidf_matrix.shape[1], 300)
-            svd = TruncatedSVD(n_components=n_components, random_state=42)
-            reduced_matrix = svd.fit_transform(tfidf_matrix)
-            logger.info(f"Reduced matrix shape: {reduced_matrix.shape}")
-            return reduced_matrix.tolist()
-
-        elif library == "OpenAI Embeddings":
-            # Dummy placeholder; you'd insert your real OpenAI call here
-            embeddings = [[0.1]*768 for _ in texts]
-            return embeddings
-
         else:
-            raise ValueError(f"Unknown library: {library}")
+            raise ValueError(f"Unknown vector library: {library}")
     except Exception as e:
-        logger.error(f"Error in vectorize_texts: {e}")
+        logger.error(f"vectorize_texts failed: {e}")
         raise
 
-def cosine_similarity(vecA, vecB):
-    dot = sum(a * b for a, b in zip(vecA, vecB))
-    normA = math.sqrt(sum(a * a for a in vecA))
-    normB = math.sqrt(sum(b * b for b in vecB))
-    return dot / (normA * normB + 1e-10)
-
-# Whoosh setup (only if needed)
-whoosh_index_dir = tempfile.mkdtemp()
-schema = Schema(id=ID(stored=True, unique=True), content=TEXT(stored=True))
-if not os.path.exists(whoosh_index_dir):
-    os.mkdir(whoosh_index_dir)
-ix = index.create_in(whoosh_index_dir, schema)
-
+# -------------- Non-Vector Retrieval --------------
 def bm25_retrieval(chunks, query, top_k=5):
     tokenized_corpus = [simple_preprocess(doc) for doc in chunks]
     bm25 = BM25Okapi(tokenized_corpus)
     tokenized_query = simple_preprocess(query)
-    scores = bm25.get_scores(tokenized_query)
-    ranked = sorted(zip(chunks, scores), key=lambda x: x[1], reverse=True)
+    raw_scores = bm25.get_scores(tokenized_query)
+    max_score = max(raw_scores) if raw_scores.any() and max(raw_scores) > 0 else 1
+    normalized_scores = [score / max_score for score in raw_scores]
+    
+    ranked = sorted(zip(chunks, normalized_scores), key=lambda x: x[1], reverse=True)
     return ranked[:top_k]
 
 def tfidf_retrieval(chunks, query, top_k=5):
     vectorizer = TfidfVectorizer(stop_words="english")
     tfidf_matrix = vectorizer.fit_transform(chunks)
     query_vec = vectorizer.transform([query])
-    cosine_similarities = (tfidf_matrix * query_vec.T).toarray().flatten()
-    ranked_indices = cosine_similarities.argsort()[::-1]
-    return [(chunks[i], float(cosine_similarities[i])) for i in ranked_indices[:top_k]]
+    import numpy as np
+    sims = (tfidf_matrix * query_vec.T).toarray().flatten()
+    
+    max_sim = sims.max() if sims.size > 0 and sims.max() > 0 else 1
+    normalized_sims = sims / max_sim
+    
+    ranked_idx = normalized_sims.argsort()[::-1]
+    return [(chunks[i], float(normalized_sims[i])) for i in ranked_idx[:top_k]]
+
 
 def boolean_retrieval(chunks, query, top_k=5):
-    query_tokens = set(simple_preprocess(query))
+    q_tokens = set(simple_preprocess(query))
     scored = []
     for c in chunks:
-        tokens = set(simple_preprocess(c))
-        if query_tokens.issubset(tokens):
-            score = len(query_tokens) / len(tokens) if tokens else 0
+        c_tokens = set(simple_preprocess(c))
+        if q_tokens.issubset(c_tokens):
+            score = len(q_tokens) / (len(c_tokens) + 1e-9)
             scored.append((c, score))
     scored.sort(key=lambda x: x[1], reverse=True)
-    return scored[:top_k]
+    
+    if scored:
+        max_score = scored[0][1]
+        normalized = [(doc, score / max_score if max_score > 0 else 0) for doc, score in scored]
+        return normalized[:top_k]
+    else:
+        return scored
 
 def keyword_overlap_retrieval(chunks, query, top_k=5):
-    query_tokens = set(simple_preprocess(query))
+    q_tokens = set(simple_preprocess(query))
     scored = []
     for c in chunks:
-        tokens = set(simple_preprocess(c))
-        overlap = len(query_tokens.intersection(tokens))
+        c_tokens = set(simple_preprocess(c))
+        overlap = len(q_tokens.intersection(c_tokens))
         scored.append((c, overlap))
     scored.sort(key=lambda x: x[1], reverse=True)
-    return scored[:top_k]
+    
+    if scored:
+        max_score = scored[0][1]
+        normalized = [(doc, score / max_score if max_score > 0 else 0) for doc, score in scored]
+        return normalized[:top_k]
+    else:
+        return scored
 
-# -------------- Routes --------------
+# -------------- Whoosh (Optional) --------------
+whoosh_index_dir = tempfile.mkdtemp()
+schema = Schema(id=ID(stored=True, unique=True), content=TEXT(stored=True))
+if not os.path.exists(whoosh_index_dir):
+    os.mkdir(whoosh_index_dir)
+ix = index.create_in(whoosh_index_dir, schema)
 
-@app.route("/vectorize", methods=["POST"])
-def vectorize_chunks():
-    """Receives chunks and a chosen library, returns vector embeddings."""
-    data = request.json
-    library = data.get("library")
-    chunks = data.get("chunks")
-    if not library or not chunks:
-        return jsonify({"error": "Missing library or chunks"}), 400
-    try:
-        # Vectorize the chunks using the chosen library
-        embeddings = vectorize_texts(library, chunks)
-        return jsonify({"embeddings": embeddings}), 200
-    except Exception as e:
-        logger.error(f"Vectorization failed for library '{library}': {e}")
-        return jsonify({"error": f"Vectorization failed: {str(e)}"}), 500
-
-@app.route("/retrieve", methods=["POST"])
-def retrieve():
-    """Handles various retrieval methods (vector-based, BM25, TF-IDF, etc.)."""
-    data = request.json
-    library = data.get("library")
-    chunks_data = data.get("chunks", [])
-    query = data.get("query", "")
-    top_k = data.get("top_k", 5)
-    method_type = data.get("type", "vectorization")
-    retrieval_method = data.get("method", "cosine")
-
-    if not library or not chunks_data or not query:
-        return jsonify({"error": "Missing library, chunks, or query"}), 400
-
-    # Build parallel lists: chunk_objs (with metadata), chunk_strings (plain text)
-    chunk_objs = []
-    chunk_strings = []
-    for item in chunks_data:
-        if isinstance(item, dict):
-            chunk_objs.append(item)
-            chunk_strings.append(str(item.get("text", "")))
-        elif isinstance(item, str):
-            chunk_objs.append({"text": item})
-            chunk_strings.append(item)
-        else:
-            chunk_objs.append({"text": str(item)})
-            chunk_strings.append(str(item))
-
-    try:
-        if method_type == "vectorization":
-            # Vector-based retrieval
-            if retrieval_method == "cosine":
-                if library == "HuggingFace Transformers":
-                    from transformers import AutoTokenizer, AutoModel
-                    import torch
-                    tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-mpnet-base-v2")
-                    model = AutoModel.from_pretrained("sentence-transformers/all-mpnet-base-v2")
-
-                    chunk_embeddings = []
-                    for txt in chunk_strings:
-                        inputs = tokenizer(txt, return_tensors="pt", truncation=True, padding=True)
-                        with torch.no_grad():
-                            outputs = model(**inputs)
-                        emb = outputs.last_hidden_state.mean(dim=1).squeeze().tolist()
-                        chunk_embeddings.append(emb)
-
-                    query_inputs = tokenizer(query, return_tensors="pt", truncation=True, padding=True)
-                    with torch.no_grad():
-                        query_outputs = model(**query_inputs)
-                    query_embedding = query_outputs.last_hidden_state.mean(dim=1).squeeze().tolist()
-                else:
-                    chunk_embeddings = vectorize_texts(library, chunk_strings)
-                    query_embedding = vectorize_texts(library, [query])[0]
-
-                scored = []
-                for i, emb in enumerate(chunk_embeddings):
-                    sim = cosine_similarity(emb, query_embedding)
-                    doc_title = chunk_objs[i].get("docTitle", "")
-                    chunk_id = chunk_objs[i].get("chunkId", "")
-                    chunk_method = chunk_objs[i].get("chunkMethod", "")
-                    scored.append({
-                        "text": chunk_strings[i],
-                        "similarity": float(sim),
-                        "docTitle": doc_title,
-                        "chunkId": chunk_id,
-                        "chunkMethod": chunk_method,
-                    })
-                scored.sort(key=lambda x: x["similarity"], reverse=True)
-                retrieved = scored[:top_k]
-
-            elif retrieval_method == "sentenceEmbeddings":
-                from sentence_transformers import SentenceTransformer
-                model = SentenceTransformer("all-MiniLM-L6-v2")
-                chunk_embeddings = model.encode(chunk_strings).tolist()
-                query_embedding = model.encode([query])[0].tolist()
-
-                scored = []
-                for i, emb in enumerate(chunk_embeddings):
-                    sim = cosine_similarity(emb, query_embedding)
-                    doc_title = chunk_objs[i].get("docTitle", "")
-                    chunk_id = chunk_objs[i].get("chunkId", "")
-                    chunk_method = chunk_objs[i].get("chunkMethod", "")
-                    scored.append({
-                        "text": chunk_strings[i],
-                        "similarity": float(sim),
-                        "docTitle": doc_title,
-                        "chunkId": chunk_id,
-                        "chunkMethod": chunk_method,
-                    })
-                scored.sort(key=lambda x: x["similarity"], reverse=True)
-                retrieved = scored[:top_k]
-
-            elif retrieval_method == "customVector":
-                from sklearn.feature_extraction.text import TfidfVectorizer
-                from sklearn.decomposition import TruncatedSVD
-                vectorizer = TfidfVectorizer(stop_words="english")
-                tfidf_matrix = vectorizer.fit_transform(chunk_strings)
-                n_components = min(tfidf_matrix.shape[1], 300)
-                svd = TruncatedSVD(n_components=n_components, random_state=42)
-                chunk_embeddings = svd.fit_transform(tfidf_matrix).tolist()
-
-                query_tfidf = vectorizer.transform([query])
-                query_embedding = svd.transform(query_tfidf)[0].tolist()
-
-                scored = []
-                for i, emb in enumerate(chunk_embeddings):
-                    sim = cosine_similarity(emb, query_embedding)
-                    doc_title = chunk_objs[i].get("docTitle", "")
-                    chunk_id = chunk_objs[i].get("chunkId", "")
-                    chunk_method = chunk_objs[i].get("chunkMethod", "")
-                    scored.append({
-                        "text": chunk_strings[i],
-                        "similarity": float(sim),
-                        "docTitle": doc_title,
-                        "chunkId": chunk_id,
-                        "chunkMethod": chunk_method,
-                    })
-                scored.sort(key=lambda x: x["similarity"], reverse=True)
-                retrieved = scored[:top_k]
-
-            elif retrieval_method == "clustered":
-                from transformers import AutoTokenizer, AutoModel
-                import torch
-                tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-mpnet-base-v2")
-                model = AutoModel.from_pretrained("sentence-transformers/all-mpnet-base-v2")
-
-                chunk_embeddings = []
-                for txt in chunk_strings:
-                    inputs = tokenizer(txt, return_tensors="pt", truncation=True, padding=True)
-                    with torch.no_grad():
-                        outputs = model(**inputs)
-                    emb = outputs.last_hidden_state.mean(dim=1).squeeze().tolist()
-                    chunk_embeddings.append(emb)
-
-                query_inputs = tokenizer(query, return_tensors="pt", truncation=True, padding=True)
-                with torch.no_grad():
-                    query_outputs = model(**query_inputs)
-                query_embedding = query_outputs.last_hidden_state.mean(dim=1).squeeze().tolist()
-
-                import numpy as np
-                X = np.array(chunk_embeddings)
-                n_clusters = min(2, len(chunk_strings))
-                kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-                labels = kmeans.fit_predict(X)
-                # For each cluster, compute an average embedding and re-score within the cluster.
-                cluster_centers = kmeans.cluster_centers_
-
-                new_scored = []
-                for i, emb in enumerate(chunk_embeddings):
-                    # Compute cosine similarity to query
-                    sim_query = cosine_similarity(emb, query_embedding)
-                    # Compute cosine similarity to the cluster center
-                    sim_center = cosine_similarity(emb, cluster_centers[labels[i]])
-                    # Combine the scores (tweak weights as needed)
-                    sim = 0.6 * sim_query + 0.4 * sim_center
-                    doc_title = chunk_objs[i].get("docTitle", "")
-                    chunk_id = chunk_objs[i].get("chunkId", "")
-                    chunk_method = chunk_objs[i].get("chunkMethod", "")
-                    new_scored.append({
-                        "text": chunk_strings[i],
-                        "similarity": float(sim),
-                        "docTitle": doc_title,
-                        "chunkId": chunk_id,
-                        "chunkMethod": chunk_method,
-                    })
-                new_scored.sort(key=lambda x: x["similarity"], reverse=True)
-                retrieved = new_scored[:top_k]
-
-            else:
-                # Fallback for vector-based
-                from transformers import AutoTokenizer, AutoModel
-                import torch
-                tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-mpnet-base-v2")
-                model = AutoModel.from_pretrained("sentence-transformers/all-mpnet-base-v2")
-
-                chunk_embeddings = []
-                for txt in chunk_strings:
-                    inputs = tokenizer(txt, return_tensors="pt", truncation=True, padding=True)
-                    with torch.no_grad():
-                        outputs = model(**inputs)
-                    emb = outputs.last_hidden_state.mean(dim=1).squeeze().tolist()
-                    chunk_embeddings.append(emb)
-
-                query_inputs = tokenizer(query, return_tensors="pt", truncation=True, padding=True)
-                with torch.no_grad():
-                    query_outputs = model(**query_inputs)
-                query_embedding = query_outputs.last_hidden_state.mean(dim=1).squeeze().tolist()
-
-                scored = []
-                for i, emb in enumerate(chunk_embeddings):
-                    sim = cosine_similarity(emb, query_embedding)
-                    doc_title = chunk_objs[i].get("docTitle", "")
-                    chunk_id = chunk_objs[i].get("chunkId", "")
-                    chunk_method = chunk_objs[i].get("chunkMethod", "")
-                    scored.append({
-                        "text": chunk_strings[i],
-                        "similarity": float(sim),
-                        "docTitle": doc_title,
-                        "chunkId": chunk_id,
-                        "chunkMethod": chunk_method,
-                    })
-                scored.sort(key=lambda x: x["similarity"], reverse=True)
-                retrieved = scored[:top_k]
-
-        elif method_type == "retrieval":
-            # Keyword-based retrieval approach
-            if library == "BM25":
-                ranked = bm25_retrieval(chunk_strings, query, top_k)
-            elif library == "TF-IDF":
-                ranked = tfidf_retrieval(chunk_strings, query, top_k)
-            elif library == "Boolean Search":
-                ranked = boolean_retrieval(chunk_strings, query, top_k)
-            elif library == "KeywordOverlap":
-                ranked = keyword_overlap_retrieval(chunk_strings, query, top_k)
-            else:
-                # Possibly fallback to vector-based if library unknown
-                chunk_embeddings = vectorize_texts(library, chunk_strings)
-                query_embedding = vectorize_texts(library, [query])[0]
-                scored = []
-                for i, emb in enumerate(chunk_embeddings):
-                    sim = cosine_similarity(emb, query_embedding)
-                    doc_title = chunk_objs[i].get("docTitle", "")
-                    chunk_id = chunk_objs[i].get("chunkId", "")
-                    chunk_method = chunk_objs[i].get("chunkMethod", "")
-                    scored.append({
-                        "text": chunk_strings[i],
-                        "similarity": float(sim),
-                        "docTitle": doc_title,
-                        "chunkId": chunk_id,
-                        "chunkMethod": chunk_method,
-                    })
-                scored.sort(key=lambda x: x["similarity"], reverse=True)
-                retrieved = scored[:top_k]
-                return jsonify({"retrieved": retrieved}), 200
-
-            # e.g. ranked = [("chunk text", score), ...]
-            retrieved = []
-            for (chunk_text, sim_score) in ranked:
-                i = chunk_strings.index(chunk_text)
-                doc_title = chunk_objs[i].get("docTitle", "")
-                chunk_id = chunk_objs[i].get("chunkId", "")
-                chunk_method = chunk_objs[i].get("chunkMethod", "")
-                retrieved.append({
-                    "text": chunk_text,
-                    "similarity": sim_score,
-                    "docTitle": doc_title,
-                    "chunkId": chunk_id,
-                    "chunkMethod": chunk_method,
-                })
-
-        else:
-            raise ValueError(f"Unknown method type: {method_type}")
-
-        return jsonify({"retrieved": retrieved}), 200
-
-    except Exception as e:
-        logger.error(f"Retrieval failed for library '{library}': {e}")
-        return jsonify({"error": f"Retrieval failed: {str(e)}"}), 500
+# -------------- Flask Routes --------------
 
 @app.route("/upload", methods=["POST"])
 def upload_files():
     """Extract text from the uploaded file based on its extension."""
     file = request.files.get("file")
     if not file:
-        logger.error("No file uploaded.")
         return jsonify({"error": "No file uploaded"}), 400
 
     filename = file.filename.lower()
     ext = filename.rsplit(".", 1)[-1]
-    try:
-        if ext == "pdf":
-            file_bytes = file.read()
-            text = extract_text_from_pdf(file_bytes)
-        elif ext == "txt":
-            file_bytes = file.read()
-            text = extract_text_from_txt(file_bytes)
-        elif ext == "docx":
-            file_bytes = file.read()
-            text = extract_text_from_docx(file_bytes)
-        else:
-            logger.error(f"Unsupported file type: {ext}")
-            return jsonify({"error": f"Unsupported file type: {ext}"}), 400
-    except Exception as e:
-        logger.error(f"Error extracting text: {e}")
-        return jsonify({"error": "Failed to extract text"}), 500
+    file_bytes = file.read()
+    if ext == "pdf":
+        text = extract_text_from_pdf(file_bytes)
+    elif ext == "txt":
+        text = extract_text_from_txt(file_bytes)
+    elif ext == "docx":
+        text = extract_text_from_docx(file_bytes)
+    else:
+        return jsonify({"error": f"Unsupported file type: {ext}"}), 400
 
-    logger.info(f"Extracted text with length {len(text)} characters.")
     return jsonify({"text": text}), 200
 
 @app.route("/process", methods=["POST"])
 def process_file():
-    """Extract and chunk text using specified chunking method."""
+    """
+    Extract and chunk text using specified chunking method (methodName + library).
+    Either a file or raw text can be provided.
+    """
     file = request.files.get("file")
     method_name = request.form.get("methodName")
     library = request.form.get("library")
     text_input = request.form.get("text", None)
-    settings = {}
-    for key in request.form:
-        if key not in ["methodName", "library", "text"]:
-            value = request.form.get(key)
-            if key in ["chunk_size", "chunk_overlap", "n_topics", "min_topic_size", "depth", "window"]:
-                try:
-                    value = int(value)
-                except ValueError:
-                    logger.warning(f"Invalid integer for {key}: {value}. Using default.")
-                    value = None
-            elif key in ["keep_separator", "add_special_tokens", "padding"]:
-                value = value.lower() == "true"
-            settings[key] = value
 
-    logger.info(f"Received request with methodName='{method_name}', library='{library}', settings={settings}")
+    settings = {}
+    for k in request.form:
+        if k not in ["methodName", "library", "text", "file"]:
+            val = request.form.get(k)
+            if k in ["chunk_size", "chunk_overlap", "n_topics", "min_topic_size"]:
+                try:
+                    val = int(val)
+                except ValueError:
+                    val = None
+            elif k in ["keep_separator"]:
+                val = (val.lower() == "true")
+            settings[k] = val
+
     if not method_name or not library:
-        logger.error("Missing methodName or library in the request.")
         return jsonify({"error": "Missing methodName or library"}), 400
 
+    # Extract text
     if file:
-        try:
-            filename = file.filename.lower()
-            ext = filename.rsplit(".", 1)[-1]
-            if ext == "pdf":
-                file_bytes = file.read()
-                text = extract_text_from_pdf(file_bytes)
-            elif ext == "txt":
-                file_bytes = file.read()
-                text = extract_text_from_txt(file_bytes)
-            elif ext == "docx":
-                file_bytes = file.read()
-                text = extract_text_from_docx(file_bytes)
-            else:
-                logger.error(f"Unsupported file type: {ext}")
-                return jsonify({"error": f"Unsupported file type: {ext}"}), 400
-        except Exception as e:
-            logger.error(f"File reading/decoding failed: {e}")
-            return jsonify({"error": "Failed to read or decode the file"}), 400
+        filename = file.filename.lower()
+        ext = filename.rsplit(".", 1)[-1]
+        file_bytes = file.read()
+        if ext == "pdf":
+            text = extract_text_from_pdf(file_bytes)
+        elif ext == "txt":
+            text = extract_text_from_txt(file_bytes)
+        elif ext == "docx":
+            text = extract_text_from_docx(file_bytes)
+        else:
+            return jsonify({"error": f"Unsupported file type: {ext}"}), 400
     elif text_input:
         text = text_input
-        logger.info("Using text input from form.")
     else:
-        logger.error("No file or text provided in the request.")
         return jsonify({"error": "No file or text provided"}), 400
 
-    logger.info(f"Processing text with length {len(text)} characters.")
-    chunks = chunk_text(method_name, library, text, **settings)
-    logger.info(f"Generated {len(chunks)} chunks using method='{method_name}' & library='{library}'.")
-    logger.debug(f"Chunks: {chunks}")
-
+    # Chunk
+    chunks = chunk_text(method_name, library, text, **{k: v for k, v in settings.items() if v is not None})
     return jsonify({
         "library": library,
         "settings": settings,
         "chunks": chunks
     }), 200
 
+@app.route("/retrieve", methods=["POST"])
+def retrieve():
+    data = request.json
+    library = data.get("library")
+    chunk_data = data.get("chunks", [])
+    query = data.get("query", "")
+    top_k = data.get("top_k", 5)
+    method_type = data.get("type", "vectorization")
+    retrieval_method = data.get("method", "cosine")
+
+    # Convert chunk data
+    chunk_texts = []
+    chunk_objs = []
+    for c in chunk_data:
+        if isinstance(c, dict):
+            chunk_texts.append(c.get("text", ""))
+            chunk_objs.append(c)
+        else:
+            chunk_texts.append(str(c))
+            chunk_objs.append({"text": str(c)})
+
+    if method_type == "vectorization":
+        # 1) Vectorize chunks and query
+        chunk_embeddings = vectorize_texts(library, chunk_texts)
+        query_embedding = vectorize_texts(library, [query])[0]
+
+        if retrieval_method == "cosine":
+            # Plain cosine similarity
+            scored = []
+            for i, emb in enumerate(chunk_embeddings):
+                sim = cosine_similarity(emb, query_embedding)
+                scored.append({
+                    "text": chunk_texts[i],
+                    "similarity": float(sim),
+                    "docTitle": chunk_objs[i].get("docTitle", ""),
+                    "chunkId": chunk_objs[i].get("chunkId", ""),
+                })
+            scored.sort(key=lambda x: x["similarity"], reverse=True)
+            retrieved = scored[:top_k]
+
+        elif retrieval_method == "sentenceEmbeddings":
+            # Use Manhattan distance instead of cosine similarity
+            def manhattan_distance(a, b):
+                return sum(abs(x - y) for x, y in zip(a, b))
+            scored = []
+            for i, emb in enumerate(chunk_embeddings):
+                dist = manhattan_distance(emb, query_embedding)
+                # Convert distance to a similarity-like score
+                sim = 1.0 / (1.0 + dist)
+                scored.append({
+                    "text": chunk_texts[i],
+                    "similarity": float(sim),
+                    "docTitle": chunk_objs[i].get("docTitle", ""),
+                    "chunkId": chunk_objs[i].get("chunkId", ""),
+                })
+            scored.sort(key=lambda x: x["similarity"], reverse=True)
+            retrieved = scored[:top_k]
+
+        elif retrieval_method == "customVector":
+            import math
+            def euclidean_distance(a, b):
+                return math.sqrt(sum((x-y)**2 for x, y in zip(a, b)))
+            scored = []
+            for i, emb in enumerate(chunk_embeddings):
+                dist = euclidean_distance(emb, query_embedding)
+                # Smaller distance => higher relevance, so invert
+                sim_score = 1.0 / (1.0 + dist)
+                scored.append({
+                    "text": chunk_texts[i],
+                    "similarity": float(sim_score),
+                    "docTitle": chunk_objs[i].get("docTitle", ""),
+                    "chunkId": chunk_objs[i].get("chunkId", ""),
+                })
+            scored.sort(key=lambda x: x["similarity"], reverse=True)
+            retrieved = scored[:top_k]
+
+        elif retrieval_method == "clustered":
+            import numpy as np
+            X = np.array(chunk_embeddings)
+            n_clusters = min(2, len(X))
+            kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+            labels = kmeans.fit_predict(X)
+            cluster_centers = kmeans.cluster_centers_
+
+            new_scored = []
+            for i, emb in enumerate(chunk_embeddings):
+                sim_query = cosine_similarity(emb, query_embedding)
+                sim_center = cosine_similarity(emb, cluster_centers[labels[i]])
+                combined = 0.6 * sim_query + 0.4 * sim_center
+                new_scored.append({
+                    "text": chunk_texts[i],
+                    "similarity": float(combined),
+                    "docTitle": chunk_objs[i].get("docTitle", ""),
+                    "chunkId": chunk_objs[i].get("chunkId", ""),
+                })
+            new_scored.sort(key=lambda x: x["similarity"], reverse=True)
+            retrieved = new_scored[:top_k]
+
+        else:
+            # fallback
+            scored = []
+            for i, emb in enumerate(chunk_embeddings):
+                sim = cosine_similarity(emb, query_embedding)
+                scored.append({
+                    "text": chunk_texts[i],
+                    "similarity": float(sim),
+                    "docTitle": chunk_objs[i].get("docTitle", ""),
+                    "chunkId": chunk_objs[i].get("chunkId", ""),
+                })
+            scored.sort(key=lambda x: x["similarity"], reverse=True)
+            retrieved = scored[:top_k]
+
+        return jsonify({"retrieved": retrieved}), 200
+
+    else:
+        # method_type == "retrieval" => Keyword-based
+        if library == "BM25":
+            ranked = bm25_retrieval(chunk_texts, query, top_k=top_k)
+        elif library == "TF-IDF":
+            ranked = tfidf_retrieval(chunk_texts, query, top_k=top_k)
+        elif library == "Boolean Search":
+            ranked = boolean_retrieval(chunk_texts, query, top_k=top_k)
+        elif library == "KeywordOverlap":
+            ranked = keyword_overlap_retrieval(chunk_texts, query, top_k=top_k)
+        else:
+            return jsonify({"error": f"Unknown keyword-based library: {library}"}), 400
+
+        retrieved = []
+        for (chunk_str, score) in ranked:
+            idx = chunk_texts.index(chunk_str)
+            retrieved.append({
+                "text": chunk_str,
+                "similarity": score,
+                "docTitle": chunk_objs[idx].get("docTitle", ""),
+                "chunkId": chunk_objs[idx].get("chunkId", ""),
+            })
+        return jsonify({"retrieved": retrieved}), 200
+
 if __name__ == "__main__":
-    # Run the Flask app for debugging
     app.run(debug=True)

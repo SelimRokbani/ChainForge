@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, FC } from "react";
 import { Handle, Position } from "reactflow";
 import {
   Button,
@@ -9,12 +9,19 @@ import {
   ActionIcon,
   Menu,
   Divider,
+  Modal,
+  Slider,
+  Select,
+  Textarea,
+  Tooltip,
 } from "@mantine/core";
 import {
   IconSearch,
   IconPlus,
   IconSettings,
   IconTrash,
+  IconChevronRight,
+  IconInfoCircle,
 } from "@tabler/icons-react";
 import { v4 as uuid } from "uuid";
 
@@ -22,8 +29,6 @@ import BaseNode from "./BaseNode";
 import NodeLabel from "./NodeLabelComponent";
 import useStore from "./store";
 import InspectFooter from "./InspectFooter";
-
-
 import LLMResponseInspectorModal, {
   LLMResponseInspectorModalRef,
 } from "./LLMResponseInspectorModal";
@@ -39,7 +44,7 @@ export interface RetrievalChunk {
 }
 
 export interface RetrievalMethodResult {
-  label: string; // "BM25" or "Cosine Similarity (HuggingFace Transformers)"
+  label: string;
   retrieved: RetrievalChunk[];
 }
 
@@ -54,16 +59,17 @@ export interface RetrievalMethodSpec {
   group: string;
   needsVector: boolean;
   vectorLib?: string;
+  settings?: Record<string, any>;
 }
 
-// Example data for retrieval methods
 const vectorOptions = [
-  "HuggingFace Transformers",
-  "OpenAI Embeddings",
-  "Cohere Embeddings",
-  "Sentence Transformers",
+  { label: "🤗 HuggingFace Transformers", value: "HuggingFace Transformers" },
+  { label: "🦄 OpenAI Embeddings", value: "OpenAI Embeddings" },
+  { label: "🧠 Cohere Embeddings", value: "Cohere Embeddings" },
+  { label: "💬 Sentence Transformers", value: "Sentence Transformers" },
 ];
 
+// Groups of retrieval methods
 const retrievalMethodGroups = [
   {
     label: "Keyword-based Retrieval",
@@ -125,7 +131,310 @@ const retrievalMethodGroups = [
   },
 ];
 
-// ---------- UI for selecting retrieval methods -----------
+// -------------------- Method Settings Modal --------------------
+// This modal shows a list of settings. For numerical values we use sliders.
+interface MethodSettingsModalProps {
+  opened: boolean;
+  initialSettings: Record<string, any>;
+  onSave: (newSettings: Record<string, any>) => void;
+  onClose: () => void;
+  isVector: boolean;
+  isOpenAI?: boolean;
+  isBM25?: boolean;
+  baseMethod?: string;
+}
+
+// Updated MethodSettingsModal with BM25 sliders:
+const MethodSettingsModal: FC<MethodSettingsModalProps> = ({
+  opened,
+  initialSettings,
+  onSave,
+  onClose,
+  isVector,
+  isOpenAI = false,
+  isBM25 = false,
+  baseMethod = "",
+}) => {
+  const [topK, setTopK] = useState<number>(initialSettings.top_k ?? 5);
+  const [similarityThreshold, setSimilarityThreshold] = useState<number>(
+    initialSettings.similarity_threshold ?? 0.7,
+  );
+  // For OpenAI methods:
+  const [openaiModel, setOpenaiModel] = useState<string>(
+    initialSettings.openai_model ?? "text-embedding-ada-002",
+  );
+  // BM25-specific settings:
+  const [bm25K1, setBm25K1] = useState<number>(initialSettings.bm25_k1 ?? 1.5);
+  const [bm25B, setBm25B] = useState<number>(initialSettings.bm25_b ?? 0.75);
+  // For TF-IDF extra setting:
+  const [maxFeatures, setMaxFeatures] = useState<number>(
+    initialSettings.max_features ?? 500,
+  );
+  // For Boolean Search extra setting:
+  const [requiredMatchCount, setRequiredMatchCount] = useState<number>(
+    initialSettings.required_match_count ?? 1,
+  );
+  // For Keyword Overlap extra setting:
+  const [normalizationFactor, setNormalizationFactor] = useState<number>(
+    initialSettings.normalization_factor ?? 0.75,
+  );
+
+  useEffect(() => {
+    setTopK(initialSettings.top_k ?? 5);
+    setSimilarityThreshold(initialSettings.similarity_threshold ?? 0.7);
+    setOpenaiModel(initialSettings.openai_model ?? "text-embedding-ada-002");
+    if (isBM25) {
+      setBm25K1(initialSettings.bm25_k1 ?? 1.5);
+      setBm25B(initialSettings.bm25_b ?? 0.75);
+    }
+    if (baseMethod === "tfidf") {
+      setMaxFeatures(initialSettings.max_features ?? 500);
+    }
+    if (baseMethod === "boolean") {
+      setRequiredMatchCount(initialSettings.required_match_count ?? 1);
+    }
+    if (baseMethod === "overlap") {
+      setNormalizationFactor(initialSettings.normalization_factor ?? 0.75);
+    }
+  }, [initialSettings, isBM25, baseMethod]);
+
+  const handleSave = () => {
+    const newSettings: Record<string, any> = {
+      top_k: topK,
+      similarity_threshold: similarityThreshold,
+    };
+    if (isOpenAI) {
+      newSettings.openai_model = openaiModel;
+    }
+    if (isBM25) {
+      newSettings.bm25_k1 = bm25K1;
+      newSettings.bm25_b = bm25B;
+    }
+    if (baseMethod === "tfidf") {
+      newSettings.max_features = maxFeatures;
+    }
+    if (baseMethod === "boolean") {
+      newSettings.required_match_count = requiredMatchCount;
+    }
+    if (baseMethod === "overlap") {
+      newSettings.normalization_factor = normalizationFactor;
+    }
+    onSave(newSettings);
+    onClose();
+  };
+
+  return (
+    <Modal opened={opened} onClose={onClose} title="Method Settings" centered>
+      <Text weight={500} mb="xs">
+        Adjust Settings:
+      </Text>
+      <Text size="sm" mb="xs">
+        Top K (number of results):
+        <Tooltip
+          label="Sets the maximum number of results returned."
+          color="gray"
+          withArrow
+        >
+          <IconInfoCircle
+            size={16}
+            style={{ marginLeft: 4, verticalAlign: "middle" }}
+          />
+        </Tooltip>
+      </Text>
+      <Slider
+        value={topK}
+        onChange={setTopK}
+        min={1}
+        max={20}
+        step={1}
+        label={(val) => String(val)}
+        mb="md"
+      />
+      <Text size="sm" mb="xs">
+        Similarity Threshold:
+        <Tooltip
+          label="Determines the minimum similarity score for a chunk to be included."
+          color="gray"
+          withArrow
+        >
+          <IconInfoCircle
+            size={16}
+            style={{ marginLeft: 4, verticalAlign: "middle" }}
+          />
+        </Tooltip>
+      </Text>
+      <Slider
+        value={similarityThreshold}
+        onChange={setSimilarityThreshold}
+        min={0}
+        max={1}
+        step={0.01}
+        label={(val) => val.toFixed(2)}
+        mb="md"
+      />
+      {isOpenAI && (
+        <>
+          <Text size="sm" mb="xs">
+            OpenAI Embedding Model:
+            <Tooltip
+              label="Select the OpenAI model used for generating embeddings."
+              color="gray"
+              withArrow
+            >
+              <IconInfoCircle
+                size={16}
+                style={{ marginLeft: 4, verticalAlign: "middle" }}
+              />
+            </Tooltip>
+          </Text>
+          <Select
+            data={[
+              "text-embedding-ada-002",
+              "text-embedding-3-small",
+              "text-embedding-3-large",
+            ]}
+            value={openaiModel}
+            onChange={(value) =>
+              setOpenaiModel(value || "text-embedding-ada-002")
+            }
+            mb="md"
+          />
+        </>
+      )}
+      {isBM25 && (
+        <>
+          <Text size="sm" mb="xs">
+            BM25 k1:
+            <Tooltip
+              label="Controls term frequency scaling in BM25. Typical value is 1.5."
+              color="gray"
+              withArrow
+            >
+              <IconInfoCircle
+                size={16}
+                style={{ marginLeft: 4, verticalAlign: "middle" }}
+              />
+            </Tooltip>
+          </Text>
+          <Slider
+            value={bm25K1}
+            onChange={setBm25K1}
+            min={0.5}
+            max={2.5}
+            step={0.1}
+            label={(val) => val.toFixed(1)}
+            mb="md"
+          />
+          <Text size="sm" mb="xs">
+            BM25 b:
+            <Tooltip
+              label="Controls document length normalization in BM25. Typical value is 0.75."
+              color="gray"
+              withArrow
+            >
+              <IconInfoCircle
+                size={16}
+                style={{ marginLeft: 4, verticalAlign: "middle" }}
+              />
+            </Tooltip>
+          </Text>
+          <Slider
+            value={bm25B}
+            onChange={setBm25B}
+            min={0}
+            max={1}
+            step={0.05}
+            label={(val) => val.toFixed(2)}
+            mb="md"
+          />
+        </>
+      )}
+      {baseMethod === "tfidf" && (
+        <>
+          <Text size="sm" mb="xs">
+            TF‑IDF Max Features:
+            <Tooltip
+              label="Set maximum features for the TF‑IDF vectorizer."
+              color="gray"
+              withArrow
+            >
+              <IconInfoCircle
+                size={16}
+                style={{ marginLeft: 4, verticalAlign: "middle" }}
+              />
+            </Tooltip>
+          </Text>
+          <Slider
+            value={maxFeatures}
+            onChange={setMaxFeatures}
+            min={100}
+            max={1000}
+            step={50}
+            label={(val) => String(val)}
+            mb="md"
+          />
+        </>
+      )}
+      {baseMethod === "boolean" && (
+        <>
+          <Text size="sm" mb="xs">
+            Boolean Required Match Count:
+            <Tooltip
+              label="Minimum number of matching tokens required."
+              color="gray"
+              withArrow
+            >
+              <IconInfoCircle
+                size={16}
+                style={{ marginLeft: 4, verticalAlign: "middle" }}
+              />
+            </Tooltip>
+          </Text>
+          <Slider
+            value={requiredMatchCount}
+            onChange={setRequiredMatchCount}
+            min={1}
+            max={5}
+            step={1}
+            label={(val) => String(val)}
+            mb="md"
+          />
+        </>
+      )}
+      {baseMethod === "overlap" && (
+        <>
+          <Text size="sm" mb="xs">
+            Keyword Overlap Normalization Factor:
+            <Tooltip
+              label="Factor applied to the overlap ratio."
+              color="gray"
+              withArrow
+            >
+              <IconInfoCircle
+                size={16}
+                style={{ marginLeft: 4, verticalAlign: "middle" }}
+              />
+            </Tooltip>
+          </Text>
+          <Slider
+            value={normalizationFactor}
+            onChange={setNormalizationFactor}
+            min={0.5}
+            max={1.0}
+            step={0.05}
+            label={(val) => val.toFixed(2)}
+            mb="md"
+          />
+        </>
+      )}
+      <Group position="right">
+        <Button onClick={handleSave}>Save Settings</Button>
+      </Group>
+    </Modal>
+  );
+};
+
+// -------------------- Retrieval Method List Container --------------------
 interface RetrievalMethodListContainerProps {
   initMethodItems?: RetrievalMethodSpec[];
   onItemsChange?: (
@@ -141,6 +450,16 @@ const RetrievalMethodListContainer: React.FC<
     useState<RetrievalMethodSpec[]>(initMethodItems);
   const [menuOpened, setMenuOpened] = useState(false);
 
+  // For the settings modal
+  const [settingsModalOpened, setSettingsModalOpened] = useState(false);
+  const [currentMethodKey, setCurrentMethodKey] = useState<string | null>(null);
+  const [currentMethodSettings, setCurrentMethodSettings] = useState<
+    Record<string, any>
+  >({});
+  const [currentIsVector, setCurrentIsVector] = useState<boolean>(false);
+  const [currentIsOpenAI, setCurrentIsOpenAI] = useState<boolean>(false);
+  const [currentBaseMethod, setCurrentBaseMethod] = useState<string>("");
+
   const oldItemsRef = useRef<RetrievalMethodSpec[]>(initMethodItems);
 
   const notifyItemsChanged = useCallback(
@@ -153,13 +472,14 @@ const RetrievalMethodListContainer: React.FC<
 
   const addMethod = useCallback(
     (
-      method: Omit<RetrievalMethodSpec, "key" | "vectorLib">,
+      method: Omit<RetrievalMethodSpec, "key" | "vectorLib" | "settings">,
       chosenLibrary?: string,
     ) => {
       const newItem: RetrievalMethodSpec = {
         ...method,
         key: uuid(),
         vectorLib: method.needsVector ? chosenLibrary : undefined,
+        settings: {},
       };
       const updated = [...methodItems, newItem];
       setMethodItems(updated);
@@ -177,12 +497,33 @@ const RetrievalMethodListContainer: React.FC<
     [methodItems, notifyItemsChanged],
   );
 
+  const openSettingsModal = (method: RetrievalMethodSpec) => {
+    setCurrentMethodKey(method.key);
+    setCurrentMethodSettings(method.settings || {});
+    setCurrentIsVector(method.needsVector);
+    setCurrentIsOpenAI(method.vectorLib === "OpenAI Embeddings");
+    setCurrentBaseMethod(method.baseMethod); // <-- new
+    setSettingsModalOpened(true);
+  };
+
+  const handleSaveSettings = (newSettings: Record<string, any>) => {
+    const updated = methodItems.map((m) => {
+      if (m.key === currentMethodKey) {
+        return { ...m, settings: newSettings };
+      }
+      return m;
+    });
+    setMethodItems(updated);
+    notifyItemsChanged(updated);
+  };
+
   return (
     <div style={{ border: "1px dashed #ccc", borderRadius: 6, padding: 8 }}>
       <Group position="apart" mb="xs">
         <Text weight={500} size="sm">
           Selected Retrieval Methods
         </Text>
+
         <Menu
           opened={menuOpened}
           onChange={setMenuOpened}
@@ -199,13 +540,14 @@ const RetrievalMethodListContainer: React.FC<
               Add +
             </Button>
           </Menu.Target>
+
           <Menu.Dropdown>
             {retrievalMethodGroups.map((group, groupIdx) => (
               <React.Fragment key={group.label}>
                 <Menu.Label>{group.label}</Menu.Label>
+
                 {group.items.map((item) => {
                   if (item.needsVector) {
-                    // Multi-level menu if user must choose a library
                     return (
                       <Menu
                         key={item.baseMethod}
@@ -213,26 +555,32 @@ const RetrievalMethodListContainer: React.FC<
                         position="right-start"
                       >
                         <Menu.Target>
-                          <Menu.Item icon={<IconSettings size={14} />}>
+                          <Menu.Item
+                            icon={<IconSettings size={14} />}
+                            rightSection={<IconChevronRight size={14} />}
+                          >
                             {item.methodName}
                           </Menu.Item>
                         </Menu.Target>
+
                         <Menu.Dropdown>
+                          {/* Show each vector library w/ its emoji label */}
                           {vectorOptions.map((lib) => (
                             <Menu.Item
-                              key={lib}
+                              key={lib.value}
                               onClick={() => {
-                                addMethod(item, lib);
+                                addMethod(item, lib.value);
                                 setMenuOpened(false);
                               }}
                             >
-                              {lib}
+                              {lib.label}
                             </Menu.Item>
                           ))}
                         </Menu.Dropdown>
                       </Menu>
                     );
                   }
+                  // Keyword-based (no sub-menu)
                   return (
                     <Menu.Item
                       key={item.baseMethod}
@@ -246,6 +594,7 @@ const RetrievalMethodListContainer: React.FC<
                     </Menu.Item>
                   );
                 })}
+
                 {groupIdx < retrievalMethodGroups.length - 1 && (
                   <Divider my="xs" />
                 )}
@@ -271,9 +620,17 @@ const RetrievalMethodListContainer: React.FC<
               </div>
               <Group spacing="xs">
                 <ActionIcon
+                  variant="subtle"
+                  onClick={() => openSettingsModal(item)}
+                  title="Settings"
+                >
+                  <IconSettings size={16} />
+                </ActionIcon>
+                <ActionIcon
                   color="red"
                   variant="subtle"
                   onClick={() => handleRemoveMethod(item.key)}
+                  title="Remove"
                 >
                   <IconTrash size={16} />
                 </ActionIcon>
@@ -282,11 +639,26 @@ const RetrievalMethodListContainer: React.FC<
           </div>
         ))
       )}
+
+      <MethodSettingsModal
+        opened={settingsModalOpened}
+        initialSettings={currentMethodSettings}
+        onSave={handleSaveSettings}
+        onClose={() => setSettingsModalOpened(false)}
+        isVector={currentIsVector}
+        isOpenAI={currentIsOpenAI}
+        isBM25={
+          currentMethodSettings?.methodName === "BM25" ||
+          methodItems.find((m) => m.key === currentMethodKey)?.baseMethod ===
+            "bm25"
+        }
+        baseMethod={currentBaseMethod}
+      />
     </div>
   );
 };
 
-// --------------- Main Retrieval Node ---------------
+// -------------------- Main Retrieval Node --------------------
 interface RetrievalNodeProps {
   data: {
     title?: string;
@@ -311,14 +683,10 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
   );
   const [results, setResults] = useState<RetrievalResults>(data.results || {});
   const [loading, setLoading] = useState(false);
-
-  // We'll keep LLMResponse array for the inspector
   const [jsonResponses, setJsonResponses] = useState<LLMResponse[]>([]);
 
-  // The inspector modal ref
   const inspectorModalRef = useRef<LLMResponseInspectorModalRef>(null);
 
-  // If the user triggers refresh from outside
   useEffect(() => {
     if (data.refresh) {
       setDataPropsForNode(id, { refresh: false, results: {} });
@@ -330,7 +698,6 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
   // If the user changes retrieval methods
   const handleMethodsChange = useCallback((newItems: RetrievalMethodSpec[]) => {
     setMethodItems(newItems);
-    // Remove old results that no longer match
     setResults((prev) => {
       const updated = { ...prev };
       Object.keys(updated).forEach((k) => {
@@ -354,7 +721,6 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
     // Sort by similarity
     allChunks.sort((a, b) => b.similarity - a.similarity);
 
-    // Déduplication par chunkId pour éviter les doublons
     const seen = new Set<string>();
     return allChunks
       .filter((ch) => {
@@ -371,15 +737,12 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
 
   const buildLLMResponses = (resultsData: RetrievalResults): LLMResponse[] => {
     const arr: LLMResponse[] = [];
-
     Object.entries(resultsData).forEach(([methodKey, methodObj]) => {
-      const methodLabel = methodObj.label; // e.g. "BM25" or "Cosine Similarity"
-      // slice to top 5 if desired
-      const topFive = methodObj.retrieved.slice(0, 5);
-
-      topFive.forEach((chunk, idx) => {
-        const cUid = chunk.chunkId || `retrieved_${methodKey}_${idx}`;
-
+      const methodLabel = methodObj.label;
+      methodObj.retrieved.forEach((chunk, idx) => {
+        // Always generate a new unique ID, regardless of the chunk's chunkId
+        const cUid = uuid();
+  
         arr.push({
           uid: cUid,
           prompt: `Retrieved by: ${methodLabel}`,
@@ -389,7 +752,7 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
             chunkId: chunk.chunkId || "",
             chunkMethod: chunk.chunkMethod || "",
           },
-          responses: [`[Chunk ID: ${cUid}]\n${chunk.text}`],
+          responses: [`[Chunk ID: ${chunk.chunkId}]\n${chunk.text}`],
           llm: methodLabel,
           metavars: {
             retrievalMethod: methodLabel,
@@ -401,18 +764,15 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
         });
       });
     });
-
     return arr;
   };
+  
 
-  // The main retrieval function
   const runRetrieval = useCallback(async () => {
     if (!query.trim()) {
       alert("Please enter a search query.");
       return;
     }
-
-    // Pull data from chunking node
     let upstreamData: { fields?: Array<any> } = {};
     try {
       upstreamData = useStore.getState().pullInputData(["fields"], id) as {
@@ -422,20 +782,20 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
       alert("No upstream fields found. Connect a ChunkingNode first.");
       return;
     }
-
     const chunkArr = upstreamData.fields || [];
     if (chunkArr.length === 0) {
       alert("No chunk data found from upstream node.");
       return;
     }
-
     setLoading(true);
     const newResults: RetrievalResults = {};
-
     for (const method of methodItems) {
+      const topKSetting = method.settings?.top_k ?? 5;
       const payload: any = {
         query,
-        top_k: 10, // request up to 10 from server
+        top_k: topKSetting,
+        similarity_threshold: method.settings?.similarity_threshold ?? 0.7,
+        // embedding_model is not passed here because we already have it in the main vector list
         chunks: chunkArr.map((chunk) => ({
           text: chunk.text,
           docTitle:
@@ -448,31 +808,40 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
         })),
       };
 
-      // Distinguish vector-based from keyword-based
       if (method.needsVector) {
         payload.library = method.vectorLib || "HuggingFace Transformers";
         payload.type = "vectorization";
         payload.method = method.baseMethod;
+        if (method.vectorLib === "OpenAI Embeddings") {
+          payload.openai_model =
+            method.settings?.openai_model ?? "text-embedding-3-small";
+        }
       } else {
         switch (method.baseMethod) {
           case "bm25":
             payload.library = "BM25";
+            payload.bm25_k1 = method.settings?.bm25_k1 ?? 1.5;
+            payload.bm25_b = method.settings?.bm25_b ?? 0.75;
             break;
           case "tfidf":
             payload.library = "TF-IDF";
+            payload.max_features = method.settings?.max_features ?? 500;
             break;
           case "boolean":
-            payload.library = "BooleanSearch";
+            payload.library = "Boolean Search";
+            payload.required_match_count =
+              method.settings?.required_match_count ?? 1;
             break;
           case "overlap":
             payload.library = "KeywordOverlap";
+            payload.normalization_factor =
+              method.settings?.normalization_factor ?? 0.75;
             break;
           default:
             payload.library = "KeywordBased";
         }
         payload.type = "retrieval";
       }
-
       try {
         const resp = await fetch("http://localhost:5000/retrieve", {
           method: "POST",
@@ -484,18 +853,13 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
           throw new Error(errData.error || "Retrieval request failed");
         }
         const json = await resp.json();
-
-        // method.methodName => e.g. "BM25"
-        // If method.needsVector => method.vectorLib => e.g. "HuggingFace Transformers"
         const label =
           method.methodName +
           (method.needsVector && method.vectorLib
             ? ` (${method.vectorLib})`
             : "");
-
-        // Force-slice to top 5
-        json.retrieved = json.retrieved.slice(0, 5);
-
+        const topKSetting = method.settings?.top_k ?? 5;
+        json.retrieved = json.retrieved.slice(0, topKSetting);
         newResults[method.key] = {
           label,
           retrieved: json.retrieved,
@@ -505,25 +869,36 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
         alert(`Retrieval failed: ${err.message}`);
       }
     }
-
-    // Flatten & deduplicate for node output
-    const deduped = prepareOutput(newResults);
+    // Combine all retrieved chunks
+    const allChunks: RetrievalChunk[] = [];
+    Object.values(newResults).forEach((m) => {
+      allChunks.push(...m.retrieved);
+    });
+    // New output preparation: sort, deduplicate and limit to the top 10 best chunks
+    const sortedChunks = allChunks.sort((a, b) => b.similarity - a.similarity);
+    const seen = new Set<string>();
+    const dedupedChunks: RetrievalChunk[] = [];
+    for (const chunk of sortedChunks) {
+      const key = chunk.chunkId || chunk.text;
+      if (!seen.has(key)) {
+        dedupedChunks.push(chunk);
+        seen.add(key);
+      }
+    }
+    const outputChunks = dedupedChunks.slice(0, 10).map((chunk) => ({
+      text: chunk.text,
+      similarity: chunk.similarity,
+      chunkId: chunk.chunkId || "No ID",
+    }));
+    
     setResults(newResults);
-
-    // Build LLMResponse array for inspector
     const newLLMResponses = buildLLMResponses(newResults);
     setJsonResponses(newLLMResponses);
-
-    // Save node data
     setDataPropsForNode(id, {
       query,
       methods: methodItems,
       results: newResults,
-      output: deduped.map((chunk) => ({
-        text: chunk.text,
-        similarity: chunk.similarity,
-        chunkId: chunk.chunkId,
-      })),
+      output: outputChunks,
     });
     pingOutputNodes(id);
     setLoading(false);
@@ -534,10 +909,8 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
     setDataPropsForNode,
     pingOutputNodes,
     buildLLMResponses,
-    prepareOutput,
   ]);
 
-  // Keep node data in sync
   useEffect(() => {
     setDataPropsForNode(id, { query, methods: methodItems, results });
   }, [id, query, methodItems, results, setDataPropsForNode]);
@@ -548,9 +921,7 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
       classNames="retrieval-node"
       style={{ backgroundColor: "rgba(255,255,255,0.9)" }}
     >
-      {/* Input from chunking node */}
       <Handle type="target" position={Position.Left} id="fields" />
-
       <NodeLabel
         title={data.title || nodeDefaultTitle}
         nodeId={id}
@@ -559,18 +930,19 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
         handleRunClick={runRetrieval}
         runButtonTooltip="Run Retrieval"
       />
-
       <div style={{ padding: 8, position: "relative" }}>
         <LoadingOverlay visible={loading} />
-        <TextInput
+        <Textarea
           label="Search Query"
           placeholder="Enter your query..."
-          icon={<IconSearch size={16} />}
+          className="prompt-field-fixed nodrag nowheel"
+          autosize
+          minRows={4}
+          maxRows={12}
           value={query}
           onChange={(e) => setQuery(e.currentTarget.value)}
           mb="sm"
         />
-
         <RetrievalMethodListContainer
           initMethodItems={methodItems}
           onItemsChange={handleMethodsChange}
@@ -581,11 +953,10 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
         onClick={() => inspectorModalRef.current?.trigger()}
         showDrawerButton={false}
         onDrawerClick={() => {
-          // Do nothing
+          // nothing here
         }}
         isDrawerOpen={false}
       />
-
       <Handle type="source" position={Position.Right} id="output" />
 
       <React.Suspense fallback={null}>
