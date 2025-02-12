@@ -27,6 +27,13 @@ from whoosh import index
 from whoosh.fields import Schema, TEXT, ID
 from whoosh.qparser import QueryParser
 
+# Add these imports at the top
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+import faiss
+from langchain_community.docstore.in_memory import InMemoryDocstore
+from langchain_community.embeddings import HuggingFaceEmbeddings
+
 load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
@@ -481,6 +488,12 @@ def retrieve():
     top_k = data.get("top_k", 5)
     method_type = data.get("type", "vectorization")
     retrieval_method = data.get("method", "cosine")
+    
+    # Get vectorstore settings if they exist
+    vector_store = data.get("vectorStore", {})
+    store_type = vector_store.get("type")
+    store_mode = vector_store.get("mode")
+    store_path = vector_store.get("path")
 
     # Convert chunk data
     chunk_texts = []
@@ -494,97 +507,216 @@ def retrieve():
             chunk_objs.append({"text": str(c)})
 
     if method_type == "vectorization":
-        # 1) Vectorize chunks and query
-        chunk_embeddings = vectorize_texts(library, chunk_texts)
-        query_embedding = vectorize_texts(library, [query])[0]
+        try:
+            # If using FAISS vectorstore
+            if store_type == "faiss" and store_path:
+                try:
+                    # Initialize embeddings based on library
+                    if library == "HuggingFace Transformers":
+                        # Using the same model as in vectorize_texts
+                        embeddings = HuggingFaceEmbeddings(
+                            model_name="sentence-transformers/all-mpnet-base-v2"
+                        )
+                    else:
+                        return jsonify({
+                            "error": "FAISS currently only supports HuggingFace Transformers embeddings",
+                            "vectorstore_status": "error"
+                        }), 400
+ 
+                    # Try to load the index
+                    if store_mode == "load":
+                        if not os.path.exists(store_path):
+                            return jsonify({
+                                "error": f"FAISS index not found at {store_path}",
+                                "vectorstore_status": "error"
+                            }), 404
+                        
+                        try:
+                            vector_store = FAISS.load_local(store_path, embeddings, allow_dangerous_deserialization=True)
+                            
+                            # Verify embedding dimensions
+                            test_embedding = embeddings.embed_query("test")
+                            if vector_store.index.d != len(test_embedding):
+                                return jsonify({
+                                    "error": "Embedding dimensions mismatch. Index was created with different embeddings.",
+                                    "vectorstore_status": "error"
+                                }), 400
+                            
+                            # Perform similarity search
+                            results = vector_store.similarity_search_with_score(query, k=top_k)
+                            
+                            # Format results
+                            retrieved = [{
+                                "text": doc.page_content,
+                                "similarity": float(score),  # Convert numpy float to native float
+                                "docTitle": doc.metadata.get("docTitle", ""),
+                                "chunkId": doc.metadata.get("chunkId", str(i))
+                            } for i, (doc, score) in enumerate(results)]
+                            
+                            return jsonify({
+                                "retrieved": retrieved,
+                                "vectorstore_status": "connected"
+                            }), 200
 
-        if retrieval_method == "cosine":
-            # Plain cosine similarity
-            scored = []
-            for i, emb in enumerate(chunk_embeddings):
-                sim = cosine_similarity(emb, query_embedding)
-                scored.append({
-                    "text": chunk_texts[i],
-                    "similarity": float(sim),
-                    "docTitle": chunk_objs[i].get("docTitle", ""),
-                    "chunkId": chunk_objs[i].get("chunkId", ""),
-                })
-            scored.sort(key=lambda x: x["similarity"], reverse=True)
-            retrieved = scored[:top_k]
+                        except Exception as e:
+                            logger.error(f"Error loading FAISS index: {str(e)}")
+                            return jsonify({
+                                "error": f"Failed to load FAISS index: {str(e)}",
+                                "vectorstore_status": "error"
+                            }), 500
 
-        elif retrieval_method == "sentenceEmbeddings":
-            # Use Manhattan distance instead of cosine similarity
-            def manhattan_distance(a, b):
-                return sum(abs(x - y) for x, y in zip(a, b))
-            scored = []
-            for i, emb in enumerate(chunk_embeddings):
-                dist = manhattan_distance(emb, query_embedding)
-                # Convert distance to a similarity-like score
-                sim = 1.0 / (1.0 + dist)
-                scored.append({
-                    "text": chunk_texts[i],
-                    "similarity": float(sim),
-                    "docTitle": chunk_objs[i].get("docTitle", ""),
-                    "chunkId": chunk_objs[i].get("chunkId", ""),
-                })
-            scored.sort(key=lambda x: x["similarity"], reverse=True)
-            retrieved = scored[:top_k]
+                    elif store_mode == "create":
+                        if not os.path.isdir(store_path):
+                            return jsonify({
+                                "error": f"Directory not found: {store_path}",
+                                "vectorstore_status": "error"
+                            }), 404
 
-        elif retrieval_method == "customVector":
-            import math
-            def euclidean_distance(a, b):
-                return math.sqrt(sum((x-y)**2 for x, y in zip(a, b)))
-            scored = []
-            for i, emb in enumerate(chunk_embeddings):
-                dist = euclidean_distance(emb, query_embedding)
-                # Smaller distance => higher relevance, so invert
-                sim_score = 1.0 / (1.0 + dist)
-                scored.append({
-                    "text": chunk_texts[i],
-                    "similarity": float(sim_score),
-                    "docTitle": chunk_objs[i].get("docTitle", ""),
-                    "chunkId": chunk_objs[i].get("chunkId", ""),
-                })
-            scored.sort(key=lambda x: x["similarity"], reverse=True)
-            retrieved = scored[:top_k]
+                        try:
+                            # Create documents with metadata
+                            documents = [
+                                Document(
+                                    page_content=text,
+                                    metadata={
+                                        "docTitle": obj.get("docTitle", ""),
+                                        "chunkId": obj.get("chunkId", str(i))
+                                    }
+                                ) for i, (text, obj) in enumerate(zip(chunk_texts, chunk_objs))
+                            ]
+                            
+                            # Create and save the index
+                            vector_store = FAISS.from_documents(documents, embeddings)
+                            vector_store.save_local(store_path)
+                            
+                            # Perform similarity search
+                            results = vector_store.similarity_search_with_score(query, k=top_k)
+                            
+                            # Format results
+                            retrieved = [{
+                                "text": doc.page_content,
+                                "similarity": float(score),
+                                "docTitle": doc.metadata.get("docTitle", ""),
+                                "chunkId": doc.metadata.get("chunkId", "")
+                            } for doc, score in results]
+                            
+                            return jsonify({
+                                "retrieved": retrieved,
+                                "vectorstore_status": "connected"
+                            }), 200
 
-        elif retrieval_method == "clustered":
-            import numpy as np
-            X = np.array(chunk_embeddings)
-            n_clusters = min(2, len(X))
-            kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-            labels = kmeans.fit_predict(X)
-            cluster_centers = kmeans.cluster_centers_
+                        except Exception as e:
+                            logger.error(f"Error creating FAISS index: {str(e)}")
+                            return jsonify({
+                                "error": f"Failed to create FAISS index: {str(e)}",
+                                "vectorstore_status": "error"
+                            }), 500
 
-            new_scored = []
-            for i, emb in enumerate(chunk_embeddings):
-                sim_query = cosine_similarity(emb, query_embedding)
-                sim_center = cosine_similarity(emb, cluster_centers[labels[i]])
-                combined = 0.6 * sim_query + 0.4 * sim_center
-                new_scored.append({
-                    "text": chunk_texts[i],
-                    "similarity": float(combined),
-                    "docTitle": chunk_objs[i].get("docTitle", ""),
-                    "chunkId": chunk_objs[i].get("chunkId", ""),
-                })
-            new_scored.sort(key=lambda x: x["similarity"], reverse=True)
-            retrieved = new_scored[:top_k]
+                except Exception as e:
+                    logger.error(f"FAISS operation failed: {str(e)}")
+                    return jsonify({
+                        "error": f"FAISS operation failed: {str(e)}",
+                        "vectorstore_status": "error"
+                    }), 500
 
-        else:
-            # fallback
-            scored = []
-            for i, emb in enumerate(chunk_embeddings):
-                sim = cosine_similarity(emb, query_embedding)
-                scored.append({
-                    "text": chunk_texts[i],
-                    "similarity": float(sim),
-                    "docTitle": chunk_objs[i].get("docTitle", ""),
-                    "chunkId": chunk_objs[i].get("chunkId", ""),
-                })
-            scored.sort(key=lambda x: x["similarity"], reverse=True)
-            retrieved = scored[:top_k]
+            # Existing vector search logic (no vectorstore)
+            # 1) Vectorize chunks and query
+            chunk_embeddings = vectorize_texts(library, chunk_texts)
+            query_embedding = vectorize_texts(library, [query])[0]
 
-        return jsonify({"retrieved": retrieved}), 200
+            if retrieval_method == "cosine":
+                # Plain cosine similarity
+                scored = []
+                for i, emb in enumerate(chunk_embeddings):
+                    sim = cosine_similarity(emb, query_embedding)
+                    scored.append({
+                        "text": chunk_texts[i],
+                        "similarity": float(sim),
+                        "docTitle": chunk_objs[i].get("docTitle", ""),
+                        "chunkId": chunk_objs[i].get("chunkId", ""),
+                    })
+                scored.sort(key=lambda x: x["similarity"], reverse=True)
+                retrieved = scored[:top_k]
+
+            elif retrieval_method == "sentenceEmbeddings":
+                # Use Manhattan distance instead of cosine similarity
+                def manhattan_distance(a, b):
+                    return sum(abs(x - y) for x, y in zip(a, b))
+                scored = []
+                for i, emb in enumerate(chunk_embeddings):
+                    dist = manhattan_distance(emb, query_embedding)
+                    # Convert distance to a similarity-like score
+                    sim = 1.0 / (1.0 + dist)
+                    scored.append({
+                        "text": chunk_texts[i],
+                        "similarity": float(sim),
+                        "docTitle": chunk_objs[i].get("docTitle", ""),
+                        "chunkId": chunk_objs[i].get("chunkId", ""),
+                    })
+                scored.sort(key=lambda x: x["similarity"], reverse=True)
+                retrieved = scored[:top_k]
+
+            elif retrieval_method == "customVector":
+                import math
+                def euclidean_distance(a, b):
+                    return math.sqrt(sum((x-y)**2 for x, y in zip(a, b)))
+                scored = []
+                for i, emb in enumerate(chunk_embeddings):
+                    dist = euclidean_distance(emb, query_embedding)
+                    # Smaller distance => higher relevance, so invert
+                    sim_score = 1.0 / (1.0 + dist)
+                    scored.append({
+                        "text": chunk_texts[i],
+                        "similarity": float(sim_score),
+                        "docTitle": chunk_objs[i].get("docTitle", ""),
+                        "chunkId": chunk_objs[i].get("chunkId", ""),
+                    })
+                scored.sort(key=lambda x: x["similarity"], reverse=True)
+                retrieved = scored[:top_k]
+
+            elif retrieval_method == "clustered":
+                import numpy as np
+                X = np.array(chunk_embeddings)
+                n_clusters = min(2, len(X))
+                kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+                labels = kmeans.fit_predict(X)
+                cluster_centers = kmeans.cluster_centers_
+
+                new_scored = []
+                for i, emb in enumerate(chunk_embeddings):
+                    sim_query = cosine_similarity(emb, query_embedding)
+                    sim_center = cosine_similarity(emb, cluster_centers[labels[i]])
+                    combined = 0.6 * sim_query + 0.4 * sim_center
+                    new_scored.append({
+                        "text": chunk_texts[i],
+                        "similarity": float(combined),
+                        "docTitle": chunk_objs[i].get("docTitle", ""),
+                        "chunkId": chunk_objs[i].get("chunkId", ""),
+                    })
+                new_scored.sort(key=lambda x: x["similarity"], reverse=True)
+                retrieved = new_scored[:top_k]
+
+            else:
+                # fallback
+                scored = []
+                for i, emb in enumerate(chunk_embeddings):
+                    sim = cosine_similarity(emb, query_embedding)
+                    scored.append({
+                        "text": chunk_texts[i],
+                        "similarity": float(sim),
+                        "docTitle": chunk_objs[i].get("docTitle", ""),
+                        "chunkId": chunk_objs[i].get("chunkId", ""),
+                    })
+                scored.sort(key=lambda x: x["similarity"], reverse=True)
+                retrieved = scored[:top_k]
+
+            return jsonify({"retrieved": retrieved}), 200
+
+        except Exception as e:
+            logger.error(f"Retrieval error: {str(e)}")
+            return jsonify({
+                "error": f"Retrieval failed: {str(e)}",
+                "vectorstore_status": "error"
+            }), 500
 
     else:
         # method_type == "retrieval" => Keyword-based

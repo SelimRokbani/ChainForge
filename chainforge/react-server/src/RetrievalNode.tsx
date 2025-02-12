@@ -14,6 +14,7 @@ import {
   Select,
   Textarea,
   Tooltip,
+  SegmentedControl,
 } from "@mantine/core";
 import {
   IconSearch,
@@ -59,8 +60,18 @@ export interface RetrievalMethodSpec {
   group: string;
   needsVector: boolean;
   vectorLib?: string;
-  settings?: Record<string, any>;
+  vectorStore?: {
+    type: string; // e.g., "memory", "faiss"
+    mode?: string; // "create" or "load"
+    status: "disconnected" | "loading" | "connected" | "error";
+  };
+  settings: Record<string, any>;
 }
+
+const storeOptions = [
+  { label: "💾 In-Memory", value: "memory" },
+  { label: "🗄️ FAISS", value: "faiss" },
+];
 
 const vectorOptions = [
   { label: "🤗 HuggingFace Transformers", value: "HuggingFace Transformers" },
@@ -136,24 +147,25 @@ const retrievalMethodGroups = [
 interface MethodSettingsModalProps {
   opened: boolean;
   initialSettings: Record<string, any>;
-  onSave: (newSettings: Record<string, any>) => void;
+  onSave: (settings: Record<string, any>) => void;
   onClose: () => void;
   isVector: boolean;
-  isOpenAI?: boolean;
-  isBM25?: boolean;
-  baseMethod?: string;
+  isOpenAI: boolean;
+  isBM25: boolean;
+  baseMethod: string;
+  vectorStore?: { type: string; mode?: string };
 }
 
-// Updated MethodSettingsModal with BM25 sliders:
-const MethodSettingsModal: FC<MethodSettingsModalProps> = ({
+const MethodSettingsModal: React.FC<MethodSettingsModalProps> = ({
   opened,
   initialSettings,
   onSave,
   onClose,
   isVector,
-  isOpenAI = false,
-  isBM25 = false,
-  baseMethod = "",
+  isOpenAI,
+  isBM25,
+  baseMethod,
+  vectorStore,
 }) => {
   const [topK, setTopK] = useState<number>(initialSettings.top_k ?? 5);
   const [similarityThreshold, setSimilarityThreshold] = useState<number>(
@@ -179,6 +191,14 @@ const MethodSettingsModal: FC<MethodSettingsModalProps> = ({
     initialSettings.normalization_factor ?? 0.75,
   );
 
+  // Add new state for FAISS settings
+  const [faissMode, setFaissMode] = useState<string>(
+    initialSettings?.faissMode || "create",
+  );
+  const [faissPath, setFaissPath] = useState<string>(
+    initialSettings?.faissPath || "",
+  );
+
   useEffect(() => {
     setTopK(initialSettings.top_k ?? 5);
     setSimilarityThreshold(initialSettings.similarity_threshold ?? 0.7);
@@ -196,35 +216,43 @@ const MethodSettingsModal: FC<MethodSettingsModalProps> = ({
     if (baseMethod === "overlap") {
       setNormalizationFactor(initialSettings.normalization_factor ?? 0.75);
     }
-  }, [initialSettings, isBM25, baseMethod]);
+    if (vectorStore?.type === "faiss") {
+      setFaissMode(initialSettings?.faissMode || "create");
+      setFaissPath(initialSettings?.faissPath || "");
+    }
+  }, [initialSettings, isBM25, baseMethod, vectorStore]);
 
   const handleSave = () => {
-    const newSettings: Record<string, any> = {
+    const settings: Record<string, any> = {
       top_k: topK,
       similarity_threshold: similarityThreshold,
     };
     if (isOpenAI) {
-      newSettings.openai_model = openaiModel;
+      settings.openai_model = openaiModel;
     }
     if (isBM25) {
-      newSettings.bm25_k1 = bm25K1;
-      newSettings.bm25_b = bm25B;
+      settings.bm25_k1 = bm25K1;
+      settings.bm25_b = bm25B;
     }
     if (baseMethod === "tfidf") {
-      newSettings.max_features = maxFeatures;
+      settings.max_features = maxFeatures;
     }
     if (baseMethod === "boolean") {
-      newSettings.required_match_count = requiredMatchCount;
+      settings.required_match_count = requiredMatchCount;
     }
     if (baseMethod === "overlap") {
-      newSettings.normalization_factor = normalizationFactor;
+      settings.normalization_factor = normalizationFactor;
     }
-    onSave(newSettings);
+    if (vectorStore?.type === "faiss") {
+      settings.faissMode = faissMode;
+      settings.faissPath = faissPath;
+    }
+    onSave(settings);
     onClose();
   };
 
   return (
-    <Modal opened={opened} onClose={onClose} title="Method Settings" centered>
+    <Modal opened={opened} onClose={onClose} title="Method Settings" size="sm">
       <Text weight={500} mb="xs">
         Adjust Settings:
       </Text>
@@ -427,6 +455,59 @@ const MethodSettingsModal: FC<MethodSettingsModalProps> = ({
           />
         </>
       )}
+      {vectorStore?.type === "faiss" && (
+        <>
+          <Text size="sm" mb="xs">
+            FAISS Index Mode:
+            <Tooltip
+              label="Choose whether to create a new index or load an existing one"
+              color="gray"
+              withArrow
+            >
+              <IconInfoCircle
+                size={16}
+                style={{ marginLeft: 4, verticalAlign: "middle" }}
+              />
+            </Tooltip>
+          </Text>
+          <SegmentedControl
+            value={faissMode}
+            onChange={setFaissMode}
+            data={[
+              { label: "Create New", value: "create" },
+              { label: "Load Existing", value: "load" },
+            ]}
+            mb="md"
+          />
+          <Text size="sm" mb="xs">
+            {faissMode === "create" ? "Index Directory:" : "Index File:"}
+            <Tooltip
+              label={
+                faissMode === "create"
+                  ? "Directory where the new index will be created"
+                  : "Path to existing FAISS index file"
+              }
+              color="gray"
+              withArrow
+            >
+              <IconInfoCircle
+                size={16}
+                style={{ marginLeft: 4, verticalAlign: "middle" }}
+              />
+            </Tooltip>
+          </Text>
+          <TextInput
+            value={faissPath}
+            onChange={(e) => setFaissPath(e.currentTarget.value)}
+            placeholder={
+              faissMode === "create"
+                ? "Enter directory path..."
+                : "Enter index file path..."
+            }
+            mb="md"
+          />
+        </>
+      )}
       <Group position="right">
         <Button onClick={handleSave}>Save Settings</Button>
       </Group>
@@ -472,13 +553,23 @@ const RetrievalMethodListContainer: React.FC<
 
   const addMethod = useCallback(
     (
-      method: Omit<RetrievalMethodSpec, "key" | "vectorLib" | "settings">,
+      method: Omit<
+        RetrievalMethodSpec,
+        "key" | "vectorLib" | "vectorStore" | "settings"
+      >,
       chosenLibrary?: string,
+      chosenStore?: string,
     ) => {
       const newItem: RetrievalMethodSpec = {
         ...method,
         key: uuid(),
         vectorLib: method.needsVector ? chosenLibrary : undefined,
+        vectorStore: method.needsVector
+          ? {
+              type: chosenStore || "memory",
+              status: "disconnected",
+            }
+          : undefined,
         settings: {},
       };
       const updated = [...methodItems, newItem];
@@ -564,23 +655,42 @@ const RetrievalMethodListContainer: React.FC<
                         </Menu.Target>
 
                         <Menu.Dropdown>
-                          {/* Show each vector library w/ its emoji label */}
+                          {/* Second level: Vector libraries */}
                           {vectorOptions.map((lib) => (
-                            <Menu.Item
+                            <Menu
                               key={lib.value}
-                              onClick={() => {
-                                addMethod(item, lib.value);
-                                setMenuOpened(false);
-                              }}
+                              trigger="hover"
+                              position="right-start"
                             >
-                              {lib.label}
-                            </Menu.Item>
+                              <Menu.Target>
+                                <Menu.Item
+                                  rightSection={<IconChevronRight size={14} />}
+                                >
+                                  {lib.label}
+                                </Menu.Item>
+                              </Menu.Target>
+
+                              <Menu.Dropdown>
+                                {/* Third level: Vectorstore options */}
+                                {storeOptions.map((store) => (
+                                  <Menu.Item
+                                    key={store.value}
+                                    onClick={() => {
+                                      addMethod(item, lib.value, store.value);
+                                      setMenuOpened(false);
+                                    }}
+                                  >
+                                    {store.label}
+                                  </Menu.Item>
+                                ))}
+                              </Menu.Dropdown>
+                            </Menu>
                           ))}
                         </Menu.Dropdown>
                       </Menu>
                     );
                   }
-                  // Keyword-based (no sub-menu)
+                  // Keyword-based methods remain unchanged
                   return (
                     <Menu.Item
                       key={item.baseMethod}
@@ -609,34 +719,60 @@ const RetrievalMethodListContainer: React.FC<
           No retrieval methods selected.
         </Text>
       ) : (
-        methodItems.map((item) => (
-          <div key={item.key} style={{ marginTop: 8 }}>
-            <Group position="apart" align="center">
-              <div style={{ maxWidth: "70%" }}>
-                <Text size="sm" weight={600}>
-                  {item.methodName}
-                  {item.vectorLib ? ` (${item.vectorLib})` : ""}
-                </Text>
-              </div>
-              <Group spacing="xs">
-                <ActionIcon
-                  variant="subtle"
-                  onClick={() => openSettingsModal(item)}
-                  title="Settings"
-                >
-                  <IconSettings size={16} />
-                </ActionIcon>
-                <ActionIcon
-                  color="red"
-                  variant="subtle"
-                  onClick={() => handleRemoveMethod(item.key)}
-                  title="Remove"
-                >
-                  <IconTrash size={16} />
-                </ActionIcon>
-              </Group>
+        methodItems.map((method) => (
+          <Group key={method.key} position="apart" mb="xs">
+            <Group spacing="xs">
+              {/* Only show status dot if vectorStore exists */}
+              {method.vectorStore && (
+                <div
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: "50%",
+                    backgroundColor: getStatusDotColor(
+                      method.vectorStore.status,
+                    ),
+                  }}
+                />
+              )}
+              <Text size="sm">
+                {method.methodName}
+                {method.vectorLib && (
+                  <>
+                    {" | "}
+                    <Text span inherit>
+                      {method.vectorLib}
+                    </Text>
+                  </>
+                )}
+                {method.vectorStore && method.vectorStore.type !== "memory" && (
+                  <>
+                    {" | "}
+                    <Text span inherit>
+                      {method.vectorStore.type.toUpperCase()}
+                    </Text>
+                  </>
+                )}
+              </Text>
             </Group>
-          </div>
+            <Group spacing={4}>
+              <ActionIcon
+                size="sm"
+                variant="subtle"
+                onClick={() => openSettingsModal(method)}
+              >
+                <IconSettings size={14} />
+              </ActionIcon>
+              <ActionIcon
+                size="sm"
+                variant="subtle"
+                color="red"
+                onClick={() => handleRemoveMethod(method.key)}
+              >
+                <IconTrash size={14} />
+              </ActionIcon>
+            </Group>
+          </Group>
         ))
       )}
 
@@ -653,9 +789,27 @@ const RetrievalMethodListContainer: React.FC<
             "bm25"
         }
         baseMethod={currentBaseMethod}
+        vectorStore={
+          methodItems.find((m) => m.key === currentMethodKey)?.vectorStore
+        }
       />
     </div>
   );
+};
+
+// Add this helper function to get status dot color
+const getStatusDotColor = (status?: string) => {
+  switch (status) {
+    case "connected":
+      return "green";
+    case "loading":
+      return "yellow";
+    case "error":
+      return "red";
+    case "disconnected":
+    default:
+      return "black";
+  }
 };
 
 // -------------------- Main Retrieval Node --------------------
@@ -742,7 +896,7 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
       methodObj.retrieved.forEach((chunk, idx) => {
         // Always generate a new unique ID, regardless of the chunk's chunkId
         const cUid = uuid();
-  
+
         arr.push({
           uid: cUid,
           prompt: `Retrieved by: ${methodLabel}`,
@@ -766,7 +920,6 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
     });
     return arr;
   };
-  
 
   const runRetrieval = useCallback(async () => {
     if (!query.trim()) {
@@ -815,6 +968,13 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
         if (method.vectorLib === "OpenAI Embeddings") {
           payload.openai_model =
             method.settings?.openai_model ?? "text-embedding-3-small";
+        }
+        if (method.vectorStore && method.vectorStore.type !== "memory") {
+          payload.vectorStore = {
+            type: method.vectorStore.type,
+            mode: method.settings?.faissMode || "create",
+            path: method.settings?.faissPath || "",
+          };
         }
       } else {
         switch (method.baseMethod) {
@@ -890,7 +1050,7 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
       similarity: chunk.similarity,
       chunkId: chunk.chunkId || "No ID",
     }));
-    
+
     setResults(newResults);
     const newLLMResponses = buildLLMResponses(newResults);
     setJsonResponses(newLLMResponses);
