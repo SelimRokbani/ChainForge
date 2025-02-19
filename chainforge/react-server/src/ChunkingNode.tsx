@@ -140,7 +140,7 @@ const ChunkingNode: React.FC<ChunkingNodeProps> = ({ data, id }) => {
               formData.append(k, String(v));
             });
 
-            const res = await fetch("http://localhost:5000/process", {
+            const res = await fetch("http://localhost:5001/process", {
               method: "POST",
               body: formData,
             });

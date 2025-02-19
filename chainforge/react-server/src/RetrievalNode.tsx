@@ -1003,7 +1003,7 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
         payload.type = "retrieval";
       }
       try {
-        const resp = await fetch("http://localhost:5000/retrieve", {
+        const resp = await fetch("http://localhost:5001/retrieve", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
