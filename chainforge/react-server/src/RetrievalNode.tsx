@@ -14,16 +14,22 @@ import {
   Select,
   Textarea,
   Tooltip,
+  Popover,
+  Card,
+  Loader,
 } from "@mantine/core";
 import {
-  IconSearch,
   IconPlus,
   IconSettings,
   IconTrash,
   IconChevronRight,
   IconInfoCircle,
+  IconSquare,
+  IconArrowNarrowRight,
 } from "@tabler/icons-react";
 import { v4 as uuid } from "uuid";
+import emojidata from "@emoji-mart/data";
+import Picker from "@emoji-mart/react";
 
 import BaseNode from "./BaseNode";
 import NodeLabel from "./NodeLabelComponent";
@@ -33,8 +39,21 @@ import LLMResponseInspectorModal, {
   LLMResponseInspectorModalRef,
 } from "./LLMResponseInspectorModal";
 import { LLMResponse } from "./backend/typing";
+import { Status } from "./StatusIndicatorComponent";
 
-// ---------- Type Declarations (inline) ----------
+// ---------- Default Emoji Mapping for Retrieval Methods ----------
+const defaultMethodEmojis: { [key: string]: string } = {
+  bm25: "📚",
+  tfidf: "📈",
+  boolean: "🧩",
+  overlap: "🤝",
+  cosine: "💡",
+  sentenceEmbeddings: "🧠",
+  customVector: "✨",
+  clustered: "🗃️",
+};
+
+// ---------- Type Declarations ----------
 export interface RetrievalChunk {
   text: string;
   similarity: number;
@@ -60,6 +79,7 @@ export interface RetrievalMethodSpec {
   needsVector: boolean;
   vectorLib?: string;
   settings?: Record<string, any>;
+  displayName?: string; // Modifiable display name (may include emoji)
 }
 
 const vectorOptions = [
@@ -69,7 +89,6 @@ const vectorOptions = [
   { label: "💬 Sentence Transformers", value: "Sentence Transformers" },
 ];
 
-// Groups of retrieval methods
 const retrievalMethodGroups = [
   {
     label: "Keyword-based Retrieval",
@@ -155,6 +174,11 @@ const MethodSettingsModal: FC<MethodSettingsModalProps> = ({
   isBM25 = false,
   baseMethod = "",
 }) => {
+  const [customName, setCustomName] = useState<string>(
+    initialSettings.displayName || "",
+  );
+  const [emoji, setEmoji] = useState<string>(initialSettings.emoji || "🔍");
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState<boolean>(false);
   const [topK, setTopK] = useState<number>(initialSettings.top_k ?? 5);
   const [similarityThreshold, setSimilarityThreshold] = useState<number>(
     initialSettings.similarity_threshold ?? 0.7,
@@ -180,6 +204,8 @@ const MethodSettingsModal: FC<MethodSettingsModalProps> = ({
   );
 
   useEffect(() => {
+    setCustomName(initialSettings.displayName || "");
+    setEmoji(initialSettings.emoji || "🔍");
     setTopK(initialSettings.top_k ?? 5);
     setSimilarityThreshold(initialSettings.similarity_threshold ?? 0.7);
     setOpenaiModel(initialSettings.openai_model ?? "text-embedding-ada-002");
@@ -198,37 +224,78 @@ const MethodSettingsModal: FC<MethodSettingsModalProps> = ({
     }
   }, [initialSettings, isBM25, baseMethod]);
 
+  const handleEmojiSelect = useCallback((emojiData: any) => {
+    setEmoji(emojiData.native);
+    setEmojiPickerOpen(false);
+  }, []);
+
   const handleSave = () => {
     const newSettings: Record<string, any> = {
       top_k: topK,
       similarity_threshold: similarityThreshold,
+      displayName: customName,
+      emoji,
     };
-    if (isOpenAI) {
-      newSettings.openai_model = openaiModel;
-    }
+    if (isOpenAI) newSettings.openai_model = openaiModel;
     if (isBM25) {
       newSettings.bm25_k1 = bm25K1;
       newSettings.bm25_b = bm25B;
     }
-    if (baseMethod === "tfidf") {
-      newSettings.max_features = maxFeatures;
-    }
-    if (baseMethod === "boolean") {
+    if (baseMethod === "tfidf") newSettings.max_features = maxFeatures;
+    if (baseMethod === "boolean")
       newSettings.required_match_count = requiredMatchCount;
-    }
-    if (baseMethod === "overlap") {
+    if (baseMethod === "overlap")
       newSettings.normalization_factor = normalizationFactor;
-    }
     onSave(newSettings);
     onClose();
   };
 
   return (
-    <Modal opened={opened} onClose={onClose} title="Method Settings" centered>
+    <Modal
+      opened={opened}
+      onClose={onClose}
+      title={
+        <div style={{ display: "flex", alignItems: "center" }}>
+          <Popover
+            width={250}
+            position="bottom"
+            withArrow
+            shadow="md"
+            opened={emojiPickerOpen}
+            onChange={setEmojiPickerOpen}
+          >
+            <Popover.Target>
+              <Button
+                variant="subtle"
+                compact
+                style={{ fontSize: "16pt" }}
+                onClick={() => setEmojiPickerOpen((o) => !o)}
+              >
+                {emoji}
+              </Button>
+            </Popover.Target>
+            <Popover.Dropdown>
+              <Picker
+                data={emojidata}
+                onEmojiSelect={handleEmojiSelect}
+                theme="light"
+              />
+            </Popover.Dropdown>
+          </Popover>
+          <TextInput
+            value={customName}
+            onChange={(e) => setCustomName(e.target.value)}
+            placeholder="Method Name"
+            style={{ marginLeft: 8, fontSize: "16pt", flex: 1 }}
+          />
+        </div>
+      }
+      centered
+    >
       <Text weight={500} mb="xs">
         Adjust Settings:
       </Text>
-      <Text size="sm" mb="xs">
+      <Text size="xs" mb="xs">
         Top K (number of results):
         <Tooltip
           label="Sets the maximum number of results returned."
@@ -236,7 +303,7 @@ const MethodSettingsModal: FC<MethodSettingsModalProps> = ({
           withArrow
         >
           <IconInfoCircle
-            size={16}
+            size={14}
             style={{ marginLeft: 4, verticalAlign: "middle" }}
           />
         </Tooltip>
@@ -249,8 +316,9 @@ const MethodSettingsModal: FC<MethodSettingsModalProps> = ({
         step={1}
         label={(val) => String(val)}
         mb="md"
+        size="xs"
       />
-      <Text size="sm" mb="xs">
+      <Text size="xs" mb="xs">
         Similarity Threshold:
         <Tooltip
           label="Determines the minimum similarity score for a chunk to be included."
@@ -258,7 +326,7 @@ const MethodSettingsModal: FC<MethodSettingsModalProps> = ({
           withArrow
         >
           <IconInfoCircle
-            size={16}
+            size={14}
             style={{ marginLeft: 4, verticalAlign: "middle" }}
           />
         </Tooltip>
@@ -271,10 +339,11 @@ const MethodSettingsModal: FC<MethodSettingsModalProps> = ({
         step={0.01}
         label={(val) => val.toFixed(2)}
         mb="md"
+        size="xs"
       />
       {isOpenAI && (
         <>
-          <Text size="sm" mb="xs">
+          <Text size="xs" mb="xs">
             OpenAI Embedding Model:
             <Tooltip
               label="Select the OpenAI model used for generating embeddings."
@@ -282,7 +351,7 @@ const MethodSettingsModal: FC<MethodSettingsModalProps> = ({
               withArrow
             >
               <IconInfoCircle
-                size={16}
+                size={14}
                 style={{ marginLeft: 4, verticalAlign: "middle" }}
               />
             </Tooltip>
@@ -298,12 +367,13 @@ const MethodSettingsModal: FC<MethodSettingsModalProps> = ({
               setOpenaiModel(value || "text-embedding-ada-002")
             }
             mb="md"
+            size="xs"
           />
         </>
       )}
       {isBM25 && (
         <>
-          <Text size="sm" mb="xs">
+          <Text size="xs" mb="xs">
             BM25 k1:
             <Tooltip
               label="Controls term frequency scaling in BM25. Typical value is 1.5."
@@ -311,7 +381,7 @@ const MethodSettingsModal: FC<MethodSettingsModalProps> = ({
               withArrow
             >
               <IconInfoCircle
-                size={16}
+                size={14}
                 style={{ marginLeft: 4, verticalAlign: "middle" }}
               />
             </Tooltip>
@@ -324,8 +394,9 @@ const MethodSettingsModal: FC<MethodSettingsModalProps> = ({
             step={0.1}
             label={(val) => val.toFixed(1)}
             mb="md"
+            size="xs"
           />
-          <Text size="sm" mb="xs">
+          <Text size="xs" mb="xs">
             BM25 b:
             <Tooltip
               label="Controls document length normalization in BM25. Typical value is 0.75."
@@ -333,7 +404,7 @@ const MethodSettingsModal: FC<MethodSettingsModalProps> = ({
               withArrow
             >
               <IconInfoCircle
-                size={16}
+                size={14}
                 style={{ marginLeft: 4, verticalAlign: "middle" }}
               />
             </Tooltip>
@@ -346,12 +417,13 @@ const MethodSettingsModal: FC<MethodSettingsModalProps> = ({
             step={0.05}
             label={(val) => val.toFixed(2)}
             mb="md"
+            size="xs"
           />
         </>
       )}
       {baseMethod === "tfidf" && (
         <>
-          <Text size="sm" mb="xs">
+          <Text size="xs" mb="xs">
             TF‑IDF Max Features:
             <Tooltip
               label="Set maximum features for the TF‑IDF vectorizer."
@@ -359,7 +431,7 @@ const MethodSettingsModal: FC<MethodSettingsModalProps> = ({
               withArrow
             >
               <IconInfoCircle
-                size={16}
+                size={14}
                 style={{ marginLeft: 4, verticalAlign: "middle" }}
               />
             </Tooltip>
@@ -372,12 +444,13 @@ const MethodSettingsModal: FC<MethodSettingsModalProps> = ({
             step={50}
             label={(val) => String(val)}
             mb="md"
+            size="xs"
           />
         </>
       )}
       {baseMethod === "boolean" && (
         <>
-          <Text size="sm" mb="xs">
+          <Text size="xs" mb="xs">
             Boolean Required Match Count:
             <Tooltip
               label="Minimum number of matching tokens required."
@@ -385,7 +458,7 @@ const MethodSettingsModal: FC<MethodSettingsModalProps> = ({
               withArrow
             >
               <IconInfoCircle
-                size={16}
+                size={14}
                 style={{ marginLeft: 4, verticalAlign: "middle" }}
               />
             </Tooltip>
@@ -398,12 +471,13 @@ const MethodSettingsModal: FC<MethodSettingsModalProps> = ({
             step={1}
             label={(val) => String(val)}
             mb="md"
+            size="xs"
           />
         </>
       )}
       {baseMethod === "overlap" && (
         <>
-          <Text size="sm" mb="xs">
+          <Text size="xs" mb="xs">
             Keyword Overlap Normalization Factor:
             <Tooltip
               label="Factor applied to the overlap ratio."
@@ -411,7 +485,7 @@ const MethodSettingsModal: FC<MethodSettingsModalProps> = ({
               withArrow
             >
               <IconInfoCircle
-                size={16}
+                size={14}
                 style={{ marginLeft: 4, verticalAlign: "middle" }}
               />
             </Tooltip>
@@ -424,11 +498,14 @@ const MethodSettingsModal: FC<MethodSettingsModalProps> = ({
             step={0.05}
             label={(val) => val.toFixed(2)}
             mb="md"
+            size="xs"
           />
         </>
       )}
       <Group position="right">
-        <Button onClick={handleSave}>Save Settings</Button>
+        <Button onClick={handleSave} size="xs">
+          Save Settings
+        </Button>
       </Group>
     </Modal>
   );
@@ -441,16 +518,17 @@ interface RetrievalMethodListContainerProps {
     newItems: RetrievalMethodSpec[],
     oldItems: RetrievalMethodSpec[],
   ) => void;
+  loadingMethods?: { [key: string]: boolean }; // Added prop
 }
 
 const RetrievalMethodListContainer: React.FC<
   RetrievalMethodListContainerProps
-> = ({ initMethodItems = [], onItemsChange }) => {
+> = ({ initMethodItems = [], onItemsChange, loadingMethods }) => {
   const [methodItems, setMethodItems] =
     useState<RetrievalMethodSpec[]>(initMethodItems);
   const [menuOpened, setMenuOpened] = useState(false);
 
-  // For the settings modal
+  // Settings modal state
   const [settingsModalOpened, setSettingsModalOpened] = useState(false);
   const [currentMethodKey, setCurrentMethodKey] = useState<string | null>(null);
   const [currentMethodSettings, setCurrentMethodSettings] = useState<
@@ -461,7 +539,6 @@ const RetrievalMethodListContainer: React.FC<
   const [currentBaseMethod, setCurrentBaseMethod] = useState<string>("");
 
   const oldItemsRef = useRef<RetrievalMethodSpec[]>(initMethodItems);
-
   const notifyItemsChanged = useCallback(
     (newItems: RetrievalMethodSpec[]) => {
       onItemsChange?.(newItems, oldItemsRef.current);
@@ -472,14 +549,26 @@ const RetrievalMethodListContainer: React.FC<
 
   const addMethod = useCallback(
     (
-      method: Omit<RetrievalMethodSpec, "key" | "vectorLib" | "settings">,
+      method: Omit<
+        RetrievalMethodSpec,
+        "key" | "vectorLib" | "settings" | "displayName"
+      >,
       chosenLibrary?: string,
     ) => {
+      const baseName =
+        method.methodName + (chosenLibrary ? ` (${chosenLibrary})` : "");
+      const existingCount = methodItems.filter((m) =>
+        m.displayName ? m.displayName.startsWith(baseName) : false,
+      ).length;
+      const displayName = existingCount
+        ? `${baseName} (${existingCount + 1})`
+        : baseName;
       const newItem: RetrievalMethodSpec = {
         ...method,
         key: uuid(),
         vectorLib: method.needsVector ? chosenLibrary : undefined,
         settings: {},
+        displayName,
       };
       const updated = [...methodItems, newItem];
       setMethodItems(updated);
@@ -497,38 +586,54 @@ const RetrievalMethodListContainer: React.FC<
     [methodItems, notifyItemsChanged],
   );
 
-  const openSettingsModal = (method: RetrievalMethodSpec) => {
+  const openSettingsModal = useCallback((method: RetrievalMethodSpec) => {
     setCurrentMethodKey(method.key);
     setCurrentMethodSettings(method.settings || {});
     setCurrentIsVector(method.needsVector);
     setCurrentIsOpenAI(method.vectorLib === "OpenAI Embeddings");
-    setCurrentBaseMethod(method.baseMethod); // <-- new
+    setCurrentBaseMethod(method.baseMethod);
     setSettingsModalOpened(true);
-  };
+  }, []);
 
-  const handleSaveSettings = (newSettings: Record<string, any>) => {
-    const updated = methodItems.map((m) => {
-      if (m.key === currentMethodKey) {
-        return { ...m, settings: newSettings };
-      }
-      return m;
-    });
-    setMethodItems(updated);
-    notifyItemsChanged(updated);
-  };
+  const handleSaveSettings = useCallback(
+    (newSettings: Record<string, any>) => {
+      if (!currentMethodKey) return;
+      const updated = methodItems.map((m) => {
+        if (m.key === currentMethodKey) {
+          const updatedDisplayName =
+            newSettings.displayName !== ""
+              ? newSettings.displayName
+              : m.displayName;
+          const updatedEmoji =
+            newSettings.emoji !== ""
+              ? newSettings.emoji
+              : m.settings?.emoji || defaultMethodEmojis[m.baseMethod];
+          return {
+            ...m,
+            settings: { ...newSettings, emoji: updatedEmoji },
+            displayName: updatedDisplayName,
+          };
+        }
+        return m;
+      });
+      setMethodItems(updated);
+      notifyItemsChanged(updated);
+    },
+    [currentMethodKey, methodItems, notifyItemsChanged],
+  );
 
   return (
-    <div style={{ border: "1px dashed #ccc", borderRadius: 6, padding: 8 }}>
+    <div style={{ border: "1px dashed #ccc", borderRadius: 6, padding: 4 }}>
       <Group position="apart" mb="xs">
-        <Text weight={500} size="sm">
+        <Text size="xs" weight={500}>
           Selected Retrieval Methods
         </Text>
-
         <Menu
-          opened={menuOpened}
-          onChange={setMenuOpened}
           position="bottom-end"
           withinPortal
+          closeOnClickOutside
+          onOpen={() => setMenuOpened(true)}
+          onClose={() => setMenuOpened(false)}
         >
           <Menu.Target>
             <Button
@@ -556,15 +661,17 @@ const RetrievalMethodListContainer: React.FC<
                       >
                         <Menu.Target>
                           <Menu.Item
-                            icon={<IconSettings size={14} />}
+                            icon={
+                              <span style={{ fontSize: "12px" }}>
+                                {defaultMethodEmojis[item.baseMethod] || "🔍"}
+                              </span>
+                            }
                             rightSection={<IconChevronRight size={14} />}
                           >
-                            {item.methodName}
+                            <Text size="xs">{item.methodName}</Text>
                           </Menu.Item>
                         </Menu.Target>
-
                         <Menu.Dropdown>
-                          {/* Show each vector library w/ its emoji label */}
                           {vectorOptions.map((lib) => (
                             <Menu.Item
                               key={lib.value}
@@ -573,28 +680,30 @@ const RetrievalMethodListContainer: React.FC<
                                 setMenuOpened(false);
                               }}
                             >
-                              {lib.label}
+                              <Text size="xs">{lib.label}</Text>
                             </Menu.Item>
                           ))}
                         </Menu.Dropdown>
                       </Menu>
                     );
                   }
-                  // Keyword-based (no sub-menu)
                   return (
                     <Menu.Item
                       key={item.baseMethod}
-                      icon={<IconSettings size={14} />}
+                      icon={
+                        <span style={{ fontSize: "12px" }}>
+                          {defaultMethodEmojis[item.baseMethod] || "🔍"}
+                        </span>
+                      }
                       onClick={() => {
                         addMethod(item);
                         setMenuOpened(false);
                       }}
                     >
-                      {item.methodName}
+                      <Text size="xs">{item.methodName}</Text>
                     </Menu.Item>
                   );
                 })}
-
                 {groupIdx < retrievalMethodGroups.length - 1 && (
                   <Divider my="xs" />
                 )}
@@ -603,19 +712,30 @@ const RetrievalMethodListContainer: React.FC<
           </Menu.Dropdown>
         </Menu>
       </Group>
-
       {methodItems.length === 0 ? (
         <Text size="xs" color="dimmed">
           No retrieval methods selected.
         </Text>
       ) : (
         methodItems.map((item) => (
-          <div key={item.key} style={{ marginTop: 8 }}>
+          <Card
+            key={item.key}
+            shadow="sm"
+            withBorder
+            style={{ fontSize: "10px", padding: "2px", marginTop: "2px" }}
+          >
             <Group position="apart" align="center">
-              <div style={{ maxWidth: "70%" }}>
-                <Text size="sm" weight={600}>
-                  {item.methodName}
-                  {item.vectorLib ? ` (${item.vectorLib})` : ""}
+              <div>
+                <Text size="xs" weight={600}>
+                  {item.settings && item.settings.emoji
+                    ? item.settings.emoji
+                    : defaultMethodEmojis[item.baseMethod] || "🔍"}{" "}
+                  {item.displayName
+                    ? item.displayName
+                    : `${item.methodName}${item.vectorLib ? ` (${item.vectorLib})` : ""}`}{" "}
+                  {loadingMethods && loadingMethods[item.key] && (
+                    <Loader size="xs" color="blue" style={{ marginLeft: 4 }} />
+                  )}
                 </Text>
               </div>
               <Group spacing="xs">
@@ -636,10 +756,9 @@ const RetrievalMethodListContainer: React.FC<
                 </ActionIcon>
               </Group>
             </Group>
-          </div>
+          </Card>
         ))
       )}
-
       <MethodSettingsModal
         opened={settingsModalOpened}
         initialSettings={currentMethodSettings}
@@ -677,13 +796,19 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
   const setDataPropsForNode = useStore((s) => s.setDataPropsForNode);
   const pingOutputNodes = useStore((s) => s.pingOutputNodes);
 
-  const [query, setQuery] = useState<string>(data.query || "");
+  const [status, setStatus] = useState<Status>(Status.NONE);
+  const [queries, setQueries] = useState<string[]>(data.query ? [data.query] : [""]);
   const [methodItems, setMethodItems] = useState<RetrievalMethodSpec[]>(
     data.methods || [],
   );
   const [results, setResults] = useState<RetrievalResults>(data.results || {});
   const [loading, setLoading] = useState(false);
   const [jsonResponses, setJsonResponses] = useState<LLMResponse[]>([]);
+  const [loadingMethods, setLoadingMethods] = useState<{
+    [key: string]: boolean;
+  }>({});
+  const [cancelId, setCancelId] = useState(Date.now());
+  const refreshCancelId = useCallback(() => setCancelId(Date.now()), []);
 
   const inspectorModalRef = useRef<LLMResponseInspectorModalRef>(null);
 
@@ -692,10 +817,10 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
       setDataPropsForNode(id, { refresh: false, results: {} });
       setResults({});
       setJsonResponses([]);
+      setStatus(Status.NONE);
     }
   }, [data.refresh, id, setDataPropsForNode]);
 
-  // If the user changes retrieval methods
   const handleMethodsChange = useCallback((newItems: RetrievalMethodSpec[]) => {
     setMethodItems(newItems);
     setResults((prev) => {
@@ -707,70 +832,12 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
       });
       return updated;
     });
-    // Clear old inspector data
     setJsonResponses([]);
   }, []);
 
-  // Flatten & deduplicate final retrieved chunks
-  const prepareOutput = useCallback((resultsData: RetrievalResults) => {
-    const allChunks: RetrievalChunk[] = [];
-    Object.values(resultsData).forEach((methodObj) => {
-      allChunks.push(...methodObj.retrieved);
-    });
-
-    // Sort by similarity
-    allChunks.sort((a, b) => b.similarity - a.similarity);
-
-    const seen = new Set<string>();
-    return allChunks
-      .filter((ch) => {
-        if (ch.chunkId && seen.has(ch.chunkId)) return false;
-        if (ch.chunkId) seen.add(ch.chunkId);
-        return true;
-      })
-      .map((chunk) => ({
-        text: chunk.text,
-        similarity: chunk.similarity,
-        chunkId: chunk.chunkId || "No ID",
-      }));
-  }, []);
-
-  const buildLLMResponses = (resultsData: RetrievalResults): LLMResponse[] => {
-    const arr: LLMResponse[] = [];
-    Object.entries(resultsData).forEach(([methodKey, methodObj]) => {
-      const methodLabel = methodObj.label;
-      methodObj.retrieved.forEach((chunk, idx) => {
-        // Always generate a new unique ID, regardless of the chunk's chunkId
-        const cUid = uuid();
-  
-        arr.push({
-          uid: cUid,
-          prompt: `Retrieved by: ${methodLabel}`,
-          vars: {
-            similarity: chunk.similarity.toFixed(3),
-            docTitle: chunk.docTitle || "Untitled",
-            chunkId: chunk.chunkId || "",
-            chunkMethod: chunk.chunkMethod || "",
-          },
-          responses: [`[Chunk ID: ${chunk.chunkId}]\n${chunk.text}`],
-          llm: methodLabel,
-          metavars: {
-            retrievalMethod: methodLabel,
-            docTitle: chunk.docTitle,
-            chunkId: chunk.chunkId,
-            chunkMethod: chunk.chunkMethod,
-            similarity: chunk.similarity,
-          },
-        });
-      });
-    });
-    return arr;
-  };
-  
-
   const runRetrieval = useCallback(async () => {
-    if (!query.trim()) {
-      alert("Please enter a search query.");
+    if (!queries.some(q => q.trim())) {
+      alert("Please enter at least one query.");
       return;
     }
     let upstreamData: { fields?: Array<any> } = {};
@@ -787,165 +854,271 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
       alert("No chunk data found from upstream node.");
       return;
     }
+    setStatus(Status.LOADING);
     setLoading(true);
-    const newResults: RetrievalResults = {};
-    for (const method of methodItems) {
-      const topKSetting = method.settings?.top_k ?? 5;
-      const payload: any = {
-        query,
-        top_k: topKSetting,
-        similarity_threshold: method.settings?.similarity_threshold ?? 0.7,
-        // embedding_model is not passed here because we already have it in the main vector list
-        chunks: chunkArr.map((chunk) => ({
-          text: chunk.text,
-          docTitle:
-            chunk.fill_history?.docTitle || chunk.metavars?.docTitle || "",
-          chunkId: chunk.fill_history?.chunkId || chunk.metavars?.chunkId || "",
-          chunkMethod:
-            chunk.fill_history?.chunkMethod ||
-            chunk.metavars?.chunkMethod ||
-            "",
-        })),
-      };
+    const newResults: { [key: string]: { label: string; retrieved: any[] } } = {};
+    const newLoading: { [key: string]: boolean } = {};
+    methodItems.forEach((m) => {
+      newLoading[m.key] = true;
+      // initialize results for each method
+      newResults[m.key] = { label: m.displayName || m.methodName, retrieved: [] };
+    });
+    setLoadingMethods(newLoading);
 
-      if (method.needsVector) {
-        payload.library = method.vectorLib || "HuggingFace Transformers";
-        payload.type = "vectorization";
-        payload.method = method.baseMethod;
-        if (method.vectorLib === "OpenAI Embeddings") {
-          payload.openai_model =
-            method.settings?.openai_model ?? "text-embedding-3-small";
-        }
-      } else {
-        switch (method.baseMethod) {
-          case "bm25":
-            payload.library = "BM25";
-            payload.bm25_k1 = method.settings?.bm25_k1 ?? 1.5;
-            payload.bm25_b = method.settings?.bm25_b ?? 0.75;
-            break;
-          case "tfidf":
-            payload.library = "TF-IDF";
-            payload.max_features = method.settings?.max_features ?? 500;
-            break;
-          case "boolean":
-            payload.library = "Boolean Search";
-            payload.required_match_count =
-              method.settings?.required_match_count ?? 1;
-            break;
-          case "overlap":
-            payload.library = "KeywordOverlap";
-            payload.normalization_factor =
-              method.settings?.normalization_factor ?? 0.75;
-            break;
-          default:
-            payload.library = "KeywordBased";
-        }
-        payload.type = "retrieval";
-      }
+    for (const method of methodItems) {
       try {
-        const resp = await fetch("http://localhost:5000/retrieve", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        if (!resp.ok) {
-          const errData = await resp.json();
-          throw new Error(errData.error || "Retrieval request failed");
-        }
-        const json = await resp.json();
-        const label =
-          method.methodName +
-          (method.needsVector && method.vectorLib
-            ? ` (${method.vectorLib})`
-            : "");
         const topKSetting = method.settings?.top_k ?? 5;
-        json.retrieved = json.retrieved.slice(0, topKSetting);
-        newResults[method.key] = {
-          label,
-          retrieved: json.retrieved,
-        };
+        // For each non-empty query, call the API and append results.
+        for (const singleQuery of queries) {
+          if (!singleQuery.trim()) continue;
+          const payload: any = {
+            query: singleQuery,
+            top_k: topKSetting,
+            similarity_threshold: method.settings?.similarity_threshold ?? 0.7,
+            chunks: chunkArr.map((chunk) => ({
+              text: chunk.text,
+              docTitle:
+                chunk.fill_history?.docTitle ||
+                chunk.metavars?.docTitle ||
+                "",
+              chunkId:
+                chunk.fill_history?.chunkId ||
+                chunk.metavars?.chunkId ||
+                "",
+            })),
+            custom_method_key: method.key,
+          };
+
+          if (method.needsVector) {
+            payload.library = method.vectorLib || "HuggingFace Transformers";
+            payload.type = "vectorization";
+            payload.method = method.baseMethod;
+            if (method.vectorLib === "OpenAI Embeddings") {
+              payload.openai_model =
+                method.settings?.openai_model ?? "text-embedding-ada-002";
+            }
+          } else {
+            switch (method.baseMethod) {
+              case "bm25":
+                payload.library = "BM25";
+                payload.bm25_k1 = method.settings?.bm25_k1 ?? 1.5;
+                payload.bm25_b = method.settings?.bm25_b ?? 0.75;
+                break;
+              case "tfidf":
+                payload.library = "TF-IDF";
+                payload.max_features = method.settings?.max_features ?? 500;
+                break;
+              case "boolean":
+                payload.library = "Boolean Search";
+                payload.required_match_count =
+                  method.settings?.required_match_count ?? 1;
+                break;
+              case "overlap":
+                payload.library = "KeywordOverlap";
+                payload.normalization_factor =
+                  method.settings?.normalization_factor ?? 0.75;
+                break;
+              default:
+                payload.library = "KeywordBased";
+            }
+            payload.type = "retrieval";
+          }
+          try {
+            const resp = await fetch("http://localhost:5000/retrieve", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+            });
+            if (!resp.ok) {
+              const errData = await resp.json();
+              throw new Error(errData.error || "Retrieval request failed");
+            }
+            const json = await resp.json();
+            const baseLabel = method.displayName || method.methodName;
+            let label = baseLabel;
+            if (method.needsVector && method.vectorLib) {
+              if (
+                !baseLabel
+                  .toLowerCase()
+                  .endsWith(`(${method.vectorLib.toLowerCase()})`)
+              ) {
+                label = `${baseLabel} (${method.vectorLib})`;
+              }
+            }
+            // Prepend query text to each retrieved chunk
+            json.retrieved.forEach((chunk: any) => {
+              newResults[method.key].retrieved.push({
+                ...chunk,
+                text: `${chunk.text}`,
+              });
+            });
+            newResults[method.key].label = label;
+          } catch (err: any) {
+            console.error(`Error retrieving for ${method.methodName}:`, err);
+            alert(`Retrieval failed for query "${singleQuery}": ${err.message}`);
+          }
+        }
       } catch (err: any) {
         console.error(`Error retrieving for ${method.methodName}:`, err);
         alert(`Retrieval failed: ${err.message}`);
+      } finally {
+        setLoadingMethods((prev) => ({ ...prev, [method.key]: false }));
       }
     }
-    // Combine all retrieved chunks
-    const allChunks: RetrievalChunk[] = [];
-    Object.values(newResults).forEach((m) => {
-      allChunks.push(...m.retrieved);
+    // Build output chunks from combined results
+    const outputChunks: Array<{
+      text: string;
+      similarity: number;
+      chunkId: string;
+    }> = [];
+    Object.entries(newResults).forEach(([_, methodResult]) => {
+      methodResult.retrieved.forEach((chunk) => {
+        outputChunks.push({
+          text: `Chunk ID: ${chunk.chunkId || "No ID"}\nRetrieval Method: ${methodResult.label}\n\n${chunk.text}`,
+          similarity: chunk.similarity,
+          chunkId: chunk.chunkId || "No ID",
+        });
+      });
     });
-    // New output preparation: sort, deduplicate and limit to the top 10 best chunks
-    const sortedChunks = allChunks.sort((a, b) => b.similarity - a.similarity);
-    const seen = new Set<string>();
-    const dedupedChunks: RetrievalChunk[] = [];
-    for (const chunk of sortedChunks) {
-      const key = chunk.chunkId || chunk.text;
-      if (!seen.has(key)) {
-        dedupedChunks.push(chunk);
-        seen.add(key);
-      }
-    }
-    const outputChunks = dedupedChunks.slice(0, 10).map((chunk) => ({
-      text: chunk.text,
-      similarity: chunk.similarity,
-      chunkId: chunk.chunkId || "No ID",
-    }));
-    
     setResults(newResults);
+    const buildLLMResponses = (
+      resultsData: { [key: string]: { label: string; retrieved: any[] } },
+    ): LLMResponse[] => {
+      const arr: LLMResponse[] = [];
+      Object.entries(resultsData).forEach(([methodKey, methodObj]) => {
+        const methodItem = methodItems.find((m) => m.key === methodKey);
+        const baseLabel =
+          methodItem?.displayName ||
+          methodItem?.methodName ||
+          "Retrieval Method";
+        let finalLabel = baseLabel;
+        if (methodItem?.needsVector && methodItem?.vectorLib) {
+          if (
+            !baseLabel
+              .toLowerCase()
+              .endsWith(`(${methodItem.vectorLib.toLowerCase()})`)
+          ) {
+            finalLabel = `${baseLabel} (${methodItem.vectorLib})`;
+          }
+        }
+        methodObj.retrieved.forEach((chunk) => {
+          const cUid = uuid();
+          arr.push({
+            uid: cUid,
+            prompt: `Retrieved by: ${finalLabel}`,
+            vars: {
+              similarity: chunk.similarity.toFixed(3),
+              docTitle: chunk.docTitle || "Untitled",
+              chunkId: chunk.chunkId || "",
+              chunkMethod: finalLabel,
+            },
+            responses: [`[Chunk ID: ${chunk.chunkId}]\n${chunk.text}`],
+            llm: finalLabel,
+            metavars: {
+              retrievalMethod: finalLabel,
+              docTitle: chunk.docTitle,
+              chunkId: chunk.chunkId,
+              chunkMethod: finalLabel,
+              similarity: chunk.similarity,
+            },
+          });
+        });
+      });
+      return arr;
+    };
     const newLLMResponses = buildLLMResponses(newResults);
     setJsonResponses(newLLMResponses);
     setDataPropsForNode(id, {
-      query,
+      queries, // update to store multiple queries
       methods: methodItems,
       results: newResults,
       output: outputChunks,
     });
     pingOutputNodes(id);
     setLoading(false);
-  }, [
-    query,
-    methodItems,
-    id,
-    setDataPropsForNode,
-    pingOutputNodes,
-    buildLLMResponses,
-  ]);
+    setStatus(Status.READY);
+  }, [queries, methodItems, id, setDataPropsForNode, pingOutputNodes]);
+
+  const handleStopClick = useCallback(() => {
+    setStatus(Status.NONE);
+    setLoading(false);
+    refreshCancelId();
+  }, [refreshCancelId]);
 
   useEffect(() => {
-    setDataPropsForNode(id, { query, methods: methodItems, results });
-  }, [id, query, methodItems, results, setDataPropsForNode]);
+    setDataPropsForNode(id, { query: queries[0], methods: methodItems, results });
+  }, [id, queries, methodItems, results, setDataPropsForNode]);
 
   return (
     <BaseNode
       nodeId={id}
       classNames="retrieval-node"
-      style={{ backgroundColor: "rgba(255,255,255,0.9)" }}
+      style={{ width: "450px", backgroundColor: "rgba(255,255,255,0.9)" }}
     >
       <Handle type="target" position={Position.Left} id="fields" />
       <NodeLabel
         title={data.title || nodeDefaultTitle}
         nodeId={id}
         icon={nodeIcon}
-        status={undefined}
-        handleRunClick={runRetrieval}
-        runButtonTooltip="Run Retrieval"
+        status={status} // Pass the status state
+        handleRunClick={
+          status === Status.LOADING ? handleStopClick : runRetrieval
+        }
+        runButtonTooltip={
+          status === Status.LOADING ? "Stop Retrieval" : "Run Retrieval"
+        }
       />
       <div style={{ padding: 8, position: "relative" }}>
-        <LoadingOverlay visible={loading} />
-        <Textarea
-          label="Search Query"
-          placeholder="Enter your query..."
-          className="prompt-field-fixed nodrag nowheel"
-          autosize
-          minRows={4}
-          maxRows={12}
-          value={query}
-          onChange={(e) => setQuery(e.currentTarget.value)}
-          mb="sm"
-        />
+        {queries.map((q, idx) => (
+          <div
+            key={idx}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              marginBottom: 4,
+            }}
+          >
+            <Textarea
+              className="prompt-field-fixed nodrag nowheel"
+              label={idx === 0 ? "Search Queries" : undefined}
+              placeholder={`Enter query ${idx + 1}...`}
+              value={q}
+              minRows={4}
+              maxRows={12}
+              autosize
+              style={{ flex: 1 }}
+              onChange={(e) => {
+                const newQueries = [...queries];
+                newQueries[idx] = e.currentTarget.value;
+                setQueries(newQueries);
+              }}
+            />
+            {queries.length > 1 && (
+              <ActionIcon
+                onClick={() =>
+                  setQueries(queries.filter((_, index) => index !== idx))
+                }
+                style={{ marginLeft: 4 }}
+                title="Delete this query"
+              >
+                <span style={{ fontSize: "16px", fontWeight: "bold" }}>X</span>
+              </ActionIcon>
+            )}
+            {idx === queries.length - 1 && (
+              <ActionIcon
+                onClick={() => setQueries([...queries, ""])}
+                style={{ marginLeft: 4 }}
+                title="Add another query"
+              >
+                <IconPlus size={16} />
+              </ActionIcon>
+            )}
+          </div>
+        ))}
         <RetrievalMethodListContainer
           initMethodItems={methodItems}
           onItemsChange={handleMethodsChange}
+          loadingMethods={loadingMethods}
         />
       </div>
 

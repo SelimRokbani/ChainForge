@@ -14,6 +14,8 @@ import {
   ActionIcon,
   Modal,
   Divider,
+  TextInput,
+  Popover,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { IconPlus, IconTrash, IconSettings } from "@tabler/icons-react";
@@ -21,6 +23,8 @@ import Form from "@rjsf/core";
 import validator from "@rjsf/validator-ajv8";
 import { v4 as uuid } from "uuid";
 import { ChunkMethodSchemas } from "./ChunkMethodSchemas";
+import emojidata from "@emoji-mart/data";
+import Picker from "@emoji-mart/react";
 
 const chunkMethodGroups = [
   {
@@ -132,15 +136,36 @@ const ChunkMethodListItem: React.FC<{
   };
   const { schema, uiSchema, fullName, description } = schemaEntry;
 
+  const [customName, setCustomName] = useState<string>(
+    (methodItem.settings && methodItem.settings.displayName) ||
+      methodItem.methodName,
+  );
+  const [emoji, setEmoji] = useState<string>(
+    (methodItem.settings && methodItem.settings.emoji) ||
+      methodItem.emoji ||
+      "🔍",
+  );
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState<boolean>(false);
+  const [formData, setFormData] = useState<any>(methodItem.settings || {});
+
   const [settingsModalOpen, { open, close }] = useDisclosure(false);
+
+  const handleEmojiSelect = useCallback((emojiData: any) => {
+    setEmoji(emojiData.native);
+    setEmojiPickerOpen(false);
+  }, []);
 
   return (
     <Card shadow="sm" p="sm" withBorder mt="xs">
       <Group position="apart" align="center">
         <div>
-          <Text size="sm" weight={600}>
-            {methodItem.emoji ? methodItem.emoji + " " : ""}
-            {methodItem.methodName} ({methodItem.library})
+          <Text size="xs" weight={600}>
+            {methodItem.settings && methodItem.settings.emoji
+              ? methodItem.settings.emoji
+              : methodItem.emoji || "🔍"}{" "}
+            {methodItem.settings && methodItem.settings.displayName
+              ? methodItem.settings.displayName
+              : `${methodItem.methodName}${methodItem.library ? ` (${methodItem.library})` : ""}`}
           </Text>
           <Text size="xs" color="dimmed">
             {fullName || description || ""}
@@ -167,21 +192,72 @@ const ChunkMethodListItem: React.FC<{
         title="Chunk Method Settings"
         size="md"
       >
+        <div
+          style={{ display: "flex", alignItems: "center", marginBottom: 16 }}
+        >
+          <Popover
+            width={250}
+            position="bottom"
+            withArrow
+            shadow="md"
+            opened={emojiPickerOpen}
+            onChange={setEmojiPickerOpen}
+          >
+            <Popover.Target>
+              <Button
+                variant="subtle"
+                compact
+                style={{ fontSize: "16pt" }}
+                onClick={() => setEmojiPickerOpen((o) => !o)}
+              >
+                {emoji}
+              </Button>
+            </Popover.Target>
+            <Popover.Dropdown>
+              <Picker
+                data={emojidata}
+                onEmojiSelect={handleEmojiSelect}
+                theme="light"
+              />
+            </Popover.Dropdown>
+          </Popover>
+          <TextInput
+            value={customName}
+            onChange={(e) => setCustomName(e.target.value)}
+            placeholder="Method Name"
+            style={{ marginLeft: 8, fontSize: "16pt", flex: 1 }}
+          />
+        </div>
         {schema && Object.keys(schema).length > 0 ? (
           <Form
             schema={schema}
             uiSchema={uiSchema}
-            formData={methodItem.settings}
-            onChange={(evt) => onSettingsUpdate(methodItem.key, evt.formData)}
+            formData={formData}
+            onChange={(evt) => setFormData(evt.formData)}
             validator={validator as any}
             liveValidate
             noHtml5Validate
-          ></Form>
+          />
         ) : (
           <Text size="sm" color="dimmed">
             (No custom settings for this method.)
           </Text>
         )}
+        <div style={{ marginTop: 16, textAlign: "right" }}>
+          <Button
+            onClick={() => {
+              onSettingsUpdate(methodItem.key, {
+                ...formData,
+                displayName: customName,
+                emoji,
+              });
+              close();
+            }}
+            size="xs"
+          >
+            Save Settings
+          </Button>
+        </div>
       </Modal>
     </Card>
   );
@@ -231,13 +307,22 @@ const ChunkMethodListContainer = forwardRef<
 
   const addMethod = useCallback(
     (m: Omit<ChunkMethodSpec, "key" | "settings">) => {
+      const baseName = m.methodName + (m.library ? ` (${m.library})` : "");
+      const existingCount = methodItems.filter((item) =>
+        item.settings && item.settings.displayName
+          ? item.settings.displayName.startsWith(baseName)
+          : false,
+      ).length;
+      const displayName = existingCount
+        ? `${baseName} (${existingCount + 1})`
+        : baseName;
       const newItem: ChunkMethodSpec = {
         key: uuid(),
         baseMethod: m.baseMethod,
         methodName: m.methodName,
         library: m.library,
         emoji: m.emoji,
-        settings: {},
+        settings: { displayName }, // store displayName in settings
       };
       const newItems = [...methodItems, newItem];
       setMethodItems(newItems);
@@ -284,7 +369,7 @@ const ChunkMethodListContainer = forwardRef<
                       setMenuOpened(false);
                     }}
                   >
-                    {item.library}
+                    <Text size="xs">{item.methodName}</Text>
                   </Menu.Item>
                 ))}
 

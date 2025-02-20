@@ -5,7 +5,7 @@ import React, {
   useEffect,
   useCallback,
 } from "react";
-import { Tooltip } from "@mantine/core";
+import { Tooltip, ActionIcon } from "@mantine/core";
 import { EditText, onSaveProps } from "react-edit-text";
 import "react-edit-text/dist/index.css";
 import useStore from "./store";
@@ -26,6 +26,7 @@ export interface NodeLabelProps {
   handleStopClick?: (nodeId: string) => void;
   handleRunHover?: () => void;
   runButtonTooltip?: string;
+  extraActions?: React.ReactNode;
 }
 
 interface DeleteConfirmProps {
@@ -48,6 +49,7 @@ export const NodeLabel: React.FC<NodeLabelProps> = ({
   handleStopClick,
   handleRunHover,
   runButtonTooltip,
+  extraActions,
 }) => {
   const setDataPropsForNode = useStore((state) => state.setDataPropsForNode);
   const [statusIndicator, setStatusIndicator] = useState(<></>);
@@ -166,6 +168,7 @@ export const NodeLabel: React.FC<NodeLabelProps> = ({
         {statusIndicator}
         <div className="node-header-btns-container">
           {customButtons ?? <></>}
+          {extraActions} {/* NEW: render extra actions here */}
           {isRunning ? stopButton : runButton}
           <button
             className="close-button nodrag"

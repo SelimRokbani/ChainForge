@@ -9,7 +9,7 @@ import { Handle, Position } from "reactflow";
 import { v4 as uuid } from "uuid";
 import { Status } from "./StatusIndicatorComponent";
 import { AlertModalContext } from "./AlertModal";
-import { Button } from "@mantine/core";
+import { Button, Group, ActionIcon } from "@mantine/core";
 import BaseNode from "./BaseNode";
 import NodeLabel from "./NodeLabelComponent";
 import useStore from "./store";
@@ -18,7 +18,7 @@ import LLMResponseInspectorModal, {
   LLMResponseInspectorModalRef,
 } from "./LLMResponseInspectorModal";
 import InspectFooter from "./InspectFooter";
-import { IconSearch } from "@tabler/icons-react";
+import { IconSearch, IconChevronDown } from "@tabler/icons-react";
 
 import ChunkMethodListContainer, {
   ChunkMethodSpec,
@@ -50,6 +50,7 @@ const ChunkingNode: React.FC<ChunkingNodeProps> = ({ data, id }) => {
   );
   const [status, setStatus] = useState<Status>(Status.NONE);
   const [jsonResponses, setJSONResponses] = useState<LLMResponse[]>([]);
+  const [chunks, setChunks] = useState<TemplateVarInfo[]>([]);
 
   const inspectorRef = useRef<LLMResponseInspectorModalRef>(null);
 
@@ -125,6 +126,8 @@ const ChunkingNode: React.FC<ChunkingNodeProps> = ({ data, id }) => {
       allChunksByLibrary[library] = [];
       allResponsesByLibrary[library] = [];
 
+      const chunkCounters: Record<string, number> = {};
+
       for (const fileInfo of fileArr) {
         const docTitle = fileInfo?.metavars?.filename || "Untitled";
 
@@ -151,24 +154,22 @@ const ChunkingNode: React.FC<ChunkingNodeProps> = ({ data, id }) => {
             }
 
             const json = await res.json();
-            const chunks = json.chunks as string[];
-
-            // We'll build chunk IDs for each doc
+            const chunksArr = json.chunks as any[];
             const docTitleSafe = docTitle.replace(/\W+/g, "_");
-            const methodSafe = method.methodName.replace(/\W+/g, "_");
-            const libSafe = library.replace(/\W+/g, "_");
-
-            chunks.forEach((cText, index) => {
-              const cId = `${methodSafe}_${index}_${libSafe}`;
-              // const cId = `${methodSafe}_${index}_${libSafe}_${docTitleSafe}`;
-              // const cId = `chunk_${index}`;
-
-              // Create the chunk object
+            const displayName = method.settings?.displayName || method.methodName;
+            if (chunkCounters[displayName] === undefined) {
+              chunkCounters[displayName] = 0;
+            }
+            chunksArr.forEach((cObj) => {
+              const cText = typeof cObj === "object" ? cObj.text : cObj;
+              const processTime = typeof cObj === "object" && cObj.processTime ? cObj.processTime : 0;
+              const cId = `${displayName}_${chunkCounters[displayName]}`;
+              chunkCounters[displayName]++;
               const chunkVar: TemplateVarInfo = {
                 text: cText,
                 prompt: "",
                 fill_history: {
-                  chunkMethod: `${method.methodName} (${method.library})`,
+                  chunkMethod: displayName,
                   docTitle,
                   chunkLibrary: library,
                   chunkId: cId,
@@ -178,19 +179,24 @@ const ChunkingNode: React.FC<ChunkingNodeProps> = ({ data, id }) => {
                   docTitle,
                   chunkLibrary: library,
                   chunkId: cId,
+                  processTime, 
                 },
               };
 
               allChunksByLibrary[library].push(chunkVar);
 
-              // LLMResponse for inspector
               const respObj: LLMResponse = {
                 uid: cId,
-                prompt: `Doc: ${docTitle} | Chunk ID: ${truncateString(cId, 25)}`,
+                prompt: `Doc: ${docTitle} | Method: ${displayName} | Chunk: ${truncateString(cId, 25)}`,
                 vars: {},
                 responses: [`[Chunk ID: ${cId}]\n${cText}`],
-                llm: method.library,
-                metavars: chunkVar.metavars || {},
+                llm: displayName,
+                metavars: {
+                  docTitle,
+                  chunkLibrary: library,
+                  chunkId: cId,
+                  processTime, 
+                },
               };
 
               allResponsesByLibrary[library].push(respObj);
@@ -207,6 +213,7 @@ const ChunkingNode: React.FC<ChunkingNodeProps> = ({ data, id }) => {
 
     // Combine results
     const allChunks = Object.values(allChunksByLibrary).flat();
+    setChunks(allChunks);
     const allResponses = Object.values(allResponsesByLibrary).flat();
 
     // 3) Output data grouped by library
@@ -240,6 +247,30 @@ const ChunkingNode: React.FC<ChunkingNodeProps> = ({ data, id }) => {
     pingOutputNodes,
   ]);
 
+  const downloadChunks = useCallback(() => {
+    if (chunks.length === 0) {
+      showAlert?.("No chunks available to download.");
+      return;
+    }
+    const header = "Chunk ID,Doc Title,Method Name,Text";
+    const rows = chunks.map((chunk) => {
+      const chunkId = chunk.metavars?.chunkId || "";
+      const docTitle = chunk.metavars?.docTitle || "";
+      const methodName = chunk.fill_history?.chunkMethod || "";
+      const text = (chunk.text ?? "").replace(/"/g, '""');
+      return `"${chunkId}","${docTitle}","${methodName}","${text}"`;
+    });
+    const csvContent = [header, ...rows].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", "chunks.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }, [chunks, showAlert]);
+
   // Open inspector
   const openInspector = () => {
     if (jsonResponses.length > 0 && inspectorRef.current) {
@@ -263,6 +294,23 @@ const ChunkingNode: React.FC<ChunkingNodeProps> = ({ data, id }) => {
         status={status}
         handleRunClick={runChunking}
         runButtonTooltip="Perform chunking on input text"
+        extraActions={
+          <button
+            onClick={downloadChunks}
+            title="Download Chunks"
+            className="AmitSahoo45-button-3 nodrag"
+            style={{
+              backgroundColor: "white",
+              border: "1px solid black",
+              color: "black",
+              padding: "0px 10px",
+              borderRadius: "4px",
+              cursor: "pointer"
+            }}
+          >
+            &#9660;
+          </button>
+        }
       />
 
       <ChunkMethodListContainer

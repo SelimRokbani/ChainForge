@@ -139,11 +139,54 @@ def syntax_spacy(text):
                 sents.append(sent_text)
     return sents if sents else [text]
 
-def syntax_texttiling(text):
+def syntax_texttiling(text, **kwargs):
     from nltk.tokenize import TextTilingTokenizer
-    tt = TextTilingTokenizer()
-    chunks = tt.tokenize(text)
-    return chunks if chunks else [text]
+    w = kwargs.get("w", 20)
+    k = kwargs.get("k", 10)
+    threshold = kwargs.get("threshold", 0.1)
+    avg_chunk_size = kwargs.get("chunk_size", 300)
+    if not text or not text.strip():
+        return [text]
+    try:
+        tt = TextTilingTokenizer(w=w, k=k, threshold=threshold)
+        chunks = tt.tokenize(text)
+        if (len(chunks) <= 1) and (len(text) > avg_chunk_size):
+            if "\n\n" in text:
+                fallback_chunks = [p.strip() for p in text.split("\n\n") if p.strip()]
+                if len(fallback_chunks) > 1:
+                    logger.info("Fallback: split text via paragraph boundaries.")
+                    return fallback_chunks
+            import nltk
+            sentences = nltk.sent_tokenize(text)
+            group_chunks = []
+            curr = ""
+            for s in sentences:
+                if len(curr) + len(s) < avg_chunk_size:
+                    curr += " " + s
+                else:
+                    group_chunks.append(curr.strip())
+                    curr = s
+            if curr:
+                group_chunks.append(curr.strip())
+            logger.info("Fallback: split text by grouping sentences.")
+            return group_chunks if group_chunks else [text]
+        return chunks if chunks else [text]
+    except Exception as e:
+        logger.error(f"TextTiling error: {e}")
+        # Final fallback: group sentences
+        import nltk
+        sentences = nltk.sent_tokenize(text)
+        group_chunks = []
+        curr = ""
+        for s in sentences:
+            if len(curr) + len(s) < avg_chunk_size:
+                curr += " " + s
+            else:
+                group_chunks.append(curr.strip())
+                curr = s
+        if curr:
+            group_chunks.append(curr.strip())
+        return group_chunks if group_chunks else [text]
 
 def hybrid_texttiling_spacy(text, chunk_size=300, chunk_overlap=100):
     from nltk.tokenize import TextTilingTokenizer
@@ -168,11 +211,12 @@ def hybrid_texttiling_spacy(text, chunk_size=300, chunk_overlap=100):
     return final_chunks if final_chunks else [text]
 
 def semantic_bertopic(text, n_topics=2, min_topic_size=1):
-    topic_model = BERTopic(n_topics=n_topics, min_topic_size=min_topic_size, random_state=42)
+    # Replace n_topics with nr_topics for compatibility with current BERTopic API
+    topic_model = BERTopic(nr_topics=n_topics, min_topic_size=min_topic_size, random_state=42)
     sentences = nltk.sent_tokenize(text)
     if not sentences:
         return [text]
-    topics = topic_model.fit_transform(sentences)
+    topics, _ = topic_model.fit_transform(sentences)
     clusters = {}
     for t, s in zip(topics, sentences):
         clusters.setdefault(t, []).append(s)
@@ -182,12 +226,18 @@ def hybrid_bertopic_spacy(text, min_topic_size=2):
     sentences = [s.text.strip() for s in nlp(text).sents if s.text.strip()]
     if not sentences:
         return [text]
-    topic_model = BERTopic(min_topic_size=min_topic_size, random_state=42)
-    topics = topic_model.fit_transform(sentences)
-    clusters = {}
-    for t, s in zip(topics, sentences):
-        clusters.setdefault(t, []).append(s)
-    return [" ".join(v) for v in clusters.values()] or [text]
+    try:
+        topic_model = BERTopic(min_topic_size=min_topic_size, random_state=42)
+        topics = topic_model.fit_transform(sentences)
+        clusters = {}
+        for t, s in zip(topics, sentences):
+            clusters.setdefault(t, []).append(s)
+        return [" ".join(v) for v in clusters.values()] or [text]
+    except Exception as e:
+        logger.error(f"BERTopic error in hybrid_bertopic_spacy: {e}")
+        doc = nlp(text)
+        fallback = [s.text.strip() for s in doc.sents if s.text.strip()]
+        return fallback if fallback else [text]
 
 def hybrid_recursive_gensim(text, chunk_size=300, chunk_overlap=100):
     splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
@@ -216,39 +266,64 @@ def hybrid_recursive_gensim(text, chunk_size=300, chunk_overlap=100):
         final_chunks.extend([" ".join(val) for val in clusters.values()])
     return final_chunks if final_chunks else [text]
 
-def hybrid_recursive_cohere(text, chunk_size=300, chunk_overlap=100):
+def hybrid_recursive_cohere(text, chunk_size=300, chunk_overlap=100, max_tokens=512, threshold=0.75):
     if not co:
+        logger.error("Cohere client not available.")
+        return [text]
+    from langchain.text_splitter import RecursiveCharacterTextSplitter
+    splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    sem_chunks = splitter.split_text(text) or [text]
+    final_chunks = []
+    import nltk
+    for chunk in sem_chunks:
+        sents = nltk.sent_tokenize(chunk)
+        # If too few sentences, do not cluster.
+        if len(sents) < 2:
+            final_chunks.append(chunk.strip())
+            continue
+        try:
+            # Attempt to obtain embeddings from Cohere.
+            response = co.embed(texts=sents)
+            embeddings = response.embeddings
+        except Exception as e:
+            logger.error(f"Cohere embed error: {e}")
+            final_chunks.append(chunk.strip())
+            continue
+        from sklearn.cluster import KMeans
+        try:
+            n_clusters = 2 if len(sents) >= 2 else 1
+            kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+            labels = kmeans.fit_predict(embeddings)
+            clusters = {}
+            for label, sent in zip(labels, sents):
+                clusters.setdefault(label, []).append(sent)
+            final_chunks.extend([" ".join(clusters[label]) for label in clusters])
+        except Exception as e:
+            logger.error(f"Clustering error in hybrid_recursive_cohere: {e}")
+            final_chunks.append(chunk.strip())
+    return final_chunks if final_chunks else [text]
+
+def hybrid_recursive_bertopic(text, chunk_size=300, chunk_overlap=300, n_topics=2, min_topic_size=1):
+    if not text or not text.strip():
         return [text]
     splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
     sem_chunks = splitter.split_text(text) or [text]
     final_chunks = []
+    import nltk
     for sc in sem_chunks:
         sents = nltk.sent_tokenize(sc)
         if not sents:
             continue
-        embeddings = co.embed(texts=sents).embeddings
-        kmeans = KMeans(n_clusters=2, random_state=42)
-        labels = kmeans.fit_predict(embeddings)
-        clusters = {}
-        for lbl, st in zip(labels, sents):
-            clusters.setdefault(lbl, []).append(st)
-        final_chunks.extend([" ".join(val) for val in clusters.values()])
-    return final_chunks if final_chunks else [text]
-
-def hybrid_recursive_bertopic(text, chunk_size=300, chunk_overlap=300, n_topics=2, min_topic_size=1):
-    splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-    sem_chunks = splitter.split_text(text) or [text]
-    final_chunks = []
-    for sc in sem_chunks:
-        sents = nltk.sent_tokenize(sc)
-        if not sents:
-            continue
-        topic_model = BERTopic(n_topics=n_topics, min_topic_size=min_topic_size, random_state=42)
-        topics, probs = topic_model.fit_transform(sents)
-        clusters = {}
-        for t, s0 in zip(topics, sents):
-            clusters.setdefault(t, []).append(s0)
-        final_chunks.extend([" ".join(val) for val in clusters.values()])
+        try:
+            topic_model = BERTopic(nr_topics=n_topics, min_topic_size=min_topic_size, random_state=42)
+            topics, _ = topic_model.fit_transform(sents)
+            clusters = {}
+            for t, sent in zip(topics, sents):
+                clusters.setdefault(t, []).append(sent)
+            final_chunks.extend([" ".join(val) for val in clusters.values()])
+        except Exception as e:
+            logger.error(f"BERTopic error in hybrid_recursive_bertopic: {e}")
+            final_chunks.append(sc.strip())
     return final_chunks if final_chunks else [text]
 
 CHUNKING_METHODS = {
