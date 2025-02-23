@@ -312,12 +312,22 @@ def vectorize_texts(library, texts):
             return embeddings
 
         elif library == "OpenAI Embeddings":
-            embeddings = []
-            for t in texts:
-                resp = openai.Embedding.create(input=t, model="text-embedding-ada-002")
-                emb = resp["data"][0]["embedding"]
-                embeddings.append(emb)
-            return embeddings
+            import os
+            from openai import OpenAI
+            
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                raise ValueError("OPENAI_API_KEY environment variable not set")
+            
+            client = OpenAI(api_key=api_key)
+            
+            # Batch process all texts at once
+            response = client.embeddings.create(
+                input=texts,
+                model="text-embedding-3-small"
+            )
+            
+            return [item.embedding for item in response.data]
 
         elif library == "Cohere Embeddings":
             if not co:
@@ -479,10 +489,57 @@ def process_file():
         "chunks": chunks
     }), 200
 
+def get_embeddings(library, texts, template=None):
+    """
+    Centralized function to get embeddings based on the specified library and template.
+    """
+    logger.info(f"get_embeddings(library={library}, template={template}, #texts={len(texts)})")
+    try:
+        if library == "HuggingFace Transformers":
+            from transformers import AutoTokenizer, AutoModel
+            import torch
+            tokenizer = AutoTokenizer.from_pretrained(template or "sentence-transformers/all-mpnet-base-v2")
+            model = AutoModel.from_pretrained(template or "sentence-transformers/all-mpnet-base-v2")
+            embeddings = []
+            for t in texts:
+                inputs = tokenizer(t, return_tensors="pt", truncation=True, padding=True)
+                with torch.no_grad():
+                    outputs = model(**inputs)
+                emb = outputs.last_hidden_state.mean(dim=1).squeeze().tolist()
+                embeddings.append(emb)
+            return embeddings
+
+        elif library == "OpenAI Embeddings":
+            embeddings = []
+            for t in texts:
+                resp = openai.Embedding.create(input=t, model=template or "text-embedding-ada-002")
+                emb = resp["data"][0]["embedding"]
+                embeddings.append(emb)
+            return embeddings
+
+        elif library == "Cohere Embeddings":
+            if not co:
+                raise ValueError("Cohere client not initialized or missing API key.")
+            response = co.embed(texts=texts)
+            return response.embeddings
+
+        elif library == "Sentence Transformers":
+            from sentence_transformers import SentenceTransformer
+            model = SentenceTransformer(template or "all-MiniLM-L6-v2")
+            emb = model.encode(texts).tolist()
+            return emb
+
+        else:
+            raise ValueError(f"Unknown vector library: {library}")
+    except Exception as e:
+        logger.error(f"get_embeddings failed: {e}")
+        raise
+
 @app.route("/retrieve", methods=["POST"])
 def retrieve():
     data = request.json
     library = data.get("library")
+    template = data.get("template")  # New parameter for specifying the embedding template
     chunk_data = data.get("chunks", [])
     query = data.get("query", "")
     top_k = data.get("top_k", 5)
@@ -517,6 +574,19 @@ def retrieve():
                         embeddings = HuggingFaceEmbeddings(
                             model_name="sentence-transformers/all-mpnet-base-v2"
                         )
+
+                    elif library == "OpenAI":
+                        if not os.getenv("OPENAI_API_KEY"):
+                            return jsonify({
+                                "error": "OPENAI_API_KEY environment variable not set",
+                                "vectorstore_status": "error"
+                            }), 400
+                            
+                        embeddings = OpenAIEmbeddings(
+                            model="text-embedding-3-small",
+                            openai_api_key=os.getenv("OPENAI_API_KEY")
+                        )
+
                     else:
                         return jsonify({
                             "error": "FAISS currently only supports HuggingFace Transformers embeddings",
@@ -525,11 +595,13 @@ def retrieve():
  
                     # Try to load the index
                     if store_mode == "load":
-                        if not os.path.exists(store_path):
+                        # Existing dimension check remains critical
+                        test_embedding = embeddings.embed_query("test")
+                        if vector_store.index.d != len(test_embedding):
                             return jsonify({
-                                "error": f"FAISS index not found at {store_path}",
+                                "error": "Embedding dimensions mismatch. Index created with different embeddings",
                                 "vectorstore_status": "error"
-                            }), 404
+                            }), 400
                         
                         try:
                             vector_store = FAISS.load_local(store_path, embeddings, allow_dangerous_deserialization=True)
