@@ -337,7 +337,33 @@ const App = () => {
   const addTabularDataNode = () => addNode("table");
   const addchunkingNode = () => addNode("chunkingNode", "chunk");
   const adduploadNode = () => addNode("uploadNode", "upload");
-  const addretrievalNode = () => addNode("retrievalNode", "retrieval");
+  const addretrievalNode = () => {
+    const { x, y } = getViewportCenter();
+    const time = Date.now();
+    const retrievalId = `retrieval-${time}`;
+    // Add RetrievalNode
+    addNodeToStore({
+      id: retrievalId,
+      type: "retrieval",
+      data: {},
+      position: { x: x - 200, y: y - 100 },
+    });
+    const joinId = `join-${time}`;
+    // Add JoinNode with a slight offset:
+    addNodeToStore({
+      id: joinId,
+      type: "join",
+      data: {},
+      position: { x: x + 400, y: y },
+    });
+    // Connect the RetrievalNode to the JoinNode:
+    onConnect({
+      source: retrievalId,
+      target: joinId,
+      id: `edge-${time}`,
+      type: "default",
+    });
+  };
   const addCommentNode = () => addNode("comment");
   const addLLMEvalNode = () => addNode("llmeval");
   const addMultiEvalNode = () => addNode("multieval");

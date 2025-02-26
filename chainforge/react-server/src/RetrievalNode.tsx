@@ -1,22 +1,21 @@
-import React, { useState, useEffect, useCallback, useRef, FC } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Handle, Position } from "reactflow";
 import {
-  Button,
-  TextInput,
   Group,
   Text,
-  LoadingOverlay,
-  ActionIcon,
+  Button,
   Menu,
   Divider,
+  ActionIcon,
+  Card,
   Modal,
   Slider,
   Select,
-  Textarea,
-  Tooltip,
+  TextInput,
   Popover,
-  Card,
+  Tooltip,
   Loader,
+  Center,
 } from "@mantine/core";
 import {
   IconPlus,
@@ -24,12 +23,11 @@ import {
   IconTrash,
   IconChevronRight,
   IconInfoCircle,
-  IconSquare,
-  IconArrowNarrowRight,
 } from "@tabler/icons-react";
 import { v4 as uuid } from "uuid";
 import emojidata from "@emoji-mart/data";
 import Picker from "@emoji-mart/react";
+import { useDisclosure } from "@mantine/hooks";
 
 import BaseNode from "./BaseNode";
 import NodeLabel from "./NodeLabelComponent";
@@ -38,22 +36,13 @@ import InspectFooter from "./InspectFooter";
 import LLMResponseInspectorModal, {
   LLMResponseInspectorModalRef,
 } from "./LLMResponseInspectorModal";
-import { LLMResponse } from "./backend/typing";
+import { LLMResponse, TemplateVarInfo } from "./backend/typing";
 import { Status } from "./StatusIndicatorComponent";
+import TemplateHooks, {
+  extractBracketedSubstrings,
+} from "./TemplateHooksComponent";
 
-// ---------- Default Emoji Mapping for Retrieval Methods ----------
-const defaultMethodEmojis: { [key: string]: string } = {
-  bm25: "📚",
-  tfidf: "📈",
-  boolean: "🧩",
-  overlap: "🤝",
-  cosine: "💡",
-  sentenceEmbeddings: "🧠",
-  customVector: "✨",
-  clustered: "🗃️",
-};
-
-// ---------- Type Declarations ----------
+// ### Type Definitions
 export interface RetrievalChunk {
   text: string;
   similarity: number;
@@ -79,8 +68,20 @@ export interface RetrievalMethodSpec {
   needsVector: boolean;
   vectorLib?: string;
   settings?: Record<string, any>;
-  displayName?: string; // Modifiable display name (may include emoji)
+  displayName?: string;
 }
+
+// ### Constants
+const defaultMethodEmojis: { [key: string]: string } = {
+  bm25: "📚",
+  tfidf: "📈",
+  boolean: "🧩",
+  overlap: "🤝",
+  cosine: "💡",
+  sentenceEmbeddings: "🧠",
+  customVector: "✨",
+  clustered: "🗃️",
+};
 
 const vectorOptions = [
   { label: "🤗 HuggingFace Transformers", value: "HuggingFace Transformers" },
@@ -150,6 +151,78 @@ const retrievalMethodGroups = [
   },
 ];
 
+// ### PromptListPopover Component (Simplified Placeholder)
+interface PromptListPopoverProps {
+  promptInfos: string[];
+  onHover: () => void;
+  onClick: () => void;
+}
+
+const PromptListPopover: React.FC<PromptListPopoverProps> = ({
+  promptInfos,
+  onHover,
+  onClick,
+}) => {
+  const [opened, { close, open }] = useDisclosure(false);
+
+  const _onHover = useCallback(() => {
+    onHover();
+    open();
+  }, [onHover, open]);
+
+  return (
+    <Popover
+      position="right-start"
+      withArrow
+      withinPortal
+      shadow="rgb(38, 57, 77) 0px 10px 30px -14px"
+      opened={opened}
+      styles={{
+        dropdown: {
+          maxHeight: "500px",
+          maxWidth: "400px",
+          overflowY: "auto",
+          backgroundColor: "#fff",
+        },
+      }}
+    >
+      <Popover.Target>
+        <Tooltip label="Click to view query previews" withArrow>
+          <Button
+            className="custom-button"
+            onMouseEnter={_onHover}
+            onMouseLeave={close}
+            onClick={onClick}
+            style={{ border: "none", background: "none", padding: 0 }}
+          >
+            <IconInfoCircle
+              size="12pt"
+              color="gray"
+              style={{ marginBottom: "-4px" }}
+            />
+          </Button>
+        </Tooltip>
+      </Popover.Target>
+      <Popover.Dropdown sx={{ pointerEvents: "none" }}>
+        <Center>
+          <Text size="xs" fw={500} color="#666">
+            Query Previews ({promptInfos?.length} total)
+          </Text>
+        </Center>
+        {promptInfos.map((info, idx) => (
+          <Text
+            key={idx}
+            size="xs"
+            style={{ whiteSpace: "pre-wrap", margin: "4px 0" }}
+          >
+            {info}
+          </Text>
+        ))}
+      </Popover.Dropdown>
+    </Popover>
+  );
+};
+
 // -------------------- Method Settings Modal --------------------
 // This modal shows a list of settings. For numerical values we use sliders.
 interface MethodSettingsModalProps {
@@ -163,8 +236,7 @@ interface MethodSettingsModalProps {
   baseMethod?: string;
 }
 
-// Updated MethodSettingsModal with BM25 sliders:
-const MethodSettingsModal: FC<MethodSettingsModalProps> = ({
+const MethodSettingsModal: React.FC<MethodSettingsModalProps> = ({
   opened,
   initialSettings,
   onSave,
@@ -518,7 +590,7 @@ interface RetrievalMethodListContainerProps {
     newItems: RetrievalMethodSpec[],
     oldItems: RetrievalMethodSpec[],
   ) => void;
-  loadingMethods?: { [key: string]: boolean }; // Added prop
+  loadingMethods?: { [key: string]: boolean };
 }
 
 const RetrievalMethodListContainer: React.FC<
@@ -527,8 +599,6 @@ const RetrievalMethodListContainer: React.FC<
   const [methodItems, setMethodItems] =
     useState<RetrievalMethodSpec[]>(initMethodItems);
   const [menuOpened, setMenuOpened] = useState(false);
-
-  // Settings modal state
   const [settingsModalOpened, setSettingsModalOpened] = useState(false);
   const [currentMethodKey, setCurrentMethodKey] = useState<string | null>(null);
   const [currentMethodSettings, setCurrentMethodSettings] = useState<
@@ -795,9 +865,11 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
 
   const setDataPropsForNode = useStore((s) => s.setDataPropsForNode);
   const pingOutputNodes = useStore((s) => s.pingOutputNodes);
+  const pullInputData = useStore((s) => s.pullInputData);
 
   const [status, setStatus] = useState<Status>(Status.NONE);
-  const [queries, setQueries] = useState<string[]>(data.query ? [data.query] : [""]);
+  const [queryText, setQueryText] = useState<string>(data.query || "");
+  const [templateVars, setTemplateVars] = useState<string[]>([]);
   const [methodItems, setMethodItems] = useState<RetrievalMethodSpec[]>(
     data.methods || [],
   );
@@ -807,10 +879,13 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
   const [loadingMethods, setLoadingMethods] = useState<{
     [key: string]: boolean;
   }>({});
-  const [cancelId, setCancelId] = useState(Date.now());
-  const refreshCancelId = useCallback(() => setCancelId(Date.now()), []);
+  const [queryPreviews, setQueryPreviews] = useState<string[]>([]);
 
   const inspectorModalRef = useRef<LLMResponseInspectorModalRef>(null);
+  const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [hooksY, setHooksY] = useState(138);
+  const [infoModalOpened, { open: openInfoModal, close: closeInfoModal }] =
+    useDisclosure(false);
 
   useEffect(() => {
     if (data.refresh) {
@@ -820,6 +895,139 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
       setStatus(Status.NONE);
     }
   }, [data.refresh, id, setDataPropsForNode]);
+
+  const refreshTemplateHooks = useCallback(
+    (text: string) => {
+      const foundTemplateVars = new Set(extractBracketedSubstrings(text));
+      if (
+        foundTemplateVars.size !== templateVars.length ||
+        ![...foundTemplateVars].every((v) => templateVars.includes(v))
+      ) {
+        setTemplateVars(Array.from(foundTemplateVars));
+      }
+    },
+    [templateVars],
+  );
+
+  const handleQueryChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = event.target.value;
+    setQueryText(value);
+    refreshTemplateHooks(value);
+    generateQueryPreviews(value); // Update previews on change
+  };
+
+  const setTextAreaRef = useCallback((elem: HTMLTextAreaElement | null) => {
+    if (!elem || !window.ResizeObserver) return;
+    if (!textAreaRef.current) {
+      let pastHooksY = 138;
+      const observer = new window.ResizeObserver(() => {
+        if (!textAreaRef.current) return;
+        const newHooksY = textAreaRef.current.clientHeight + 68;
+        if (pastHooksY !== newHooksY) {
+          setHooksY(newHooksY);
+          pastHooksY = newHooksY;
+        }
+      });
+      observer.observe(elem);
+      textAreaRef.current = elem;
+    }
+  }, []);
+
+  const generateQueryPreviews = useCallback(
+    (text: string) => {
+      let pulledData: { [key: string]: any[] } = {};
+      try {
+        pulledData = pullInputData(templateVars.concat(["fields"]), id);
+      } catch (error) {
+        console.error("Error pulling input data for preview:", error);
+      }
+
+      const baseQueries = text.split("\n").filter((q) => q.trim());
+      let maxRows = 1;
+      if (templateVars.length > 0) {
+        maxRows = Math.max(
+          ...templateVars.map((varName) =>
+            pulledData[varName] ? pulledData[varName].length : 0,
+          ),
+          1,
+        );
+      }
+
+      const previews: string[] = [];
+      for (let rowIdx = 0; rowIdx < maxRows && previews.length < 10; rowIdx++) {
+        baseQueries.forEach((baseQuery) => {
+          let resolvedQuery = baseQuery;
+          templateVars.forEach((varName) => {
+            if (pulledData[varName] && pulledData[varName].length > rowIdx) {
+              resolvedQuery = resolvedQuery.replace(
+                `{${varName}}`,
+                pulledData[varName][rowIdx]?.text ||
+                  pulledData[varName][rowIdx] ||
+                  varName,
+              );
+            } else {
+              resolvedQuery = resolvedQuery.replace(`{${varName}}`, varName);
+            }
+          });
+          if (resolvedQuery.trim() && previews.length < 10) {
+            previews.push(resolvedQuery);
+          }
+        });
+      }
+      setQueryPreviews(previews);
+    },
+    [templateVars, pullInputData, id],
+  );
+
+  const buildLLMResponses = (resultsData: {
+    [key: string]: { label: string; retrieved: any[] };
+  }): LLMResponse[] => {
+    const arr: LLMResponse[] = [];
+    Object.entries(resultsData).forEach(([methodKey, methodObj]) => {
+      const methodItem = methodItems.find((m) => m.key === methodKey);
+      const baseLabel =
+        methodItem?.displayName || methodItem?.methodName || "Retrieval Method";
+      let finalLabel = baseLabel;
+      if (methodItem?.needsVector && methodItem?.vectorLib) {
+        if (
+          !baseLabel
+            .toLowerCase()
+            .endsWith(`(${methodItem.vectorLib.toLowerCase()})`)
+        ) {
+          finalLabel = `${baseLabel} (${methodItem.vectorLib})`;
+        }
+      }
+      methodObj.retrieved.forEach((chunk) => {
+        const cUid = uuid();
+        // Use the chunk's stored chunking method display if present.
+        const chunkMethodDisplay =
+          chunk.chunkMethod ||
+          (chunk.fill_history && chunk.fill_history.chunkMethod) ||
+          finalLabel;
+        arr.push({
+          uid: cUid,
+          prompt: `Retrieved by chunk method: ${chunkMethodDisplay}`,
+          vars: {
+            similarity: chunk.similarity.toFixed(3),
+            docTitle: chunk.docTitle || "Untitled",
+            chunkId: chunk.chunkId || "",
+            // Use the chunking method display name here.
+            chunkMethod: chunkMethodDisplay,
+          },
+          responses: [` ${chunk.text}`],
+          llm: chunkMethodDisplay,
+          metavars: {
+            retrievalMethod: chunkMethodDisplay,
+            docTitle: chunk.docTitle,
+            chunkId: chunk.chunkId,
+            chunkMethod: chunkMethodDisplay,
+            similarity: chunk.similarity,
+          },
+        });
+      });
+    });
+    return arr;
+  };
 
   const handleMethodsChange = useCallback((newItems: RetrievalMethodSpec[]) => {
     setMethodItems(newItems);
@@ -836,55 +1044,107 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
   }, []);
 
   const runRetrieval = useCallback(async () => {
-    if (!queries.some(q => q.trim())) {
-      alert("Please enter at least one query.");
+    if (!queryText.trim() && templateVars.length === 0) {
+      alert("Please enter at least one query or connect a data source.");
       return;
     }
-    let upstreamData: { fields?: Array<any> } = {};
+
+    let pulledData: { [key: string]: any[] } = {};
     try {
-      upstreamData = useStore.getState().pullInputData(["fields"], id) as {
-        fields?: Array<any>;
-      };
+      pulledData = pullInputData(templateVars.concat(["fields"]), id);
     } catch (error) {
-      alert("No upstream fields found. Connect a ChunkingNode first.");
+      console.error("Error pulling input data:", error);
+    }
+
+    const baseQueries = queryText.split("\n").filter((q) => q.trim());
+    const chunkArr = pulledData.fields || [];
+
+    if (chunkArr.length === 0 && !templateVars.length) {
+      alert("No chunk data found from upstream node or template variables.");
       return;
     }
-    const chunkArr = upstreamData.fields || [];
-    if (chunkArr.length === 0) {
-      alert("No chunk data found from upstream node.");
+
+    let maxRows = 1;
+    if (templateVars.length > 0) {
+      maxRows = Math.max(
+        ...templateVars.map((varName) =>
+          pulledData[varName] ? pulledData[varName].length : 0,
+        ),
+        1,
+      );
+    }
+
+    const queries: string[] = [];
+    for (let rowIdx = 0; rowIdx < maxRows; rowIdx++) {
+      baseQueries.forEach((baseQuery) => {
+        let resolvedQuery = baseQuery;
+        templateVars.forEach((varName) => {
+          if (pulledData[varName] && pulledData[varName].length > rowIdx) {
+            resolvedQuery = resolvedQuery.replace(
+              `{${varName}}`,
+              pulledData[varName][rowIdx]?.text ||
+                pulledData[varName][rowIdx] ||
+                varName,
+            );
+          } else {
+            resolvedQuery = resolvedQuery.replace(`{${varName}}`, varName);
+          }
+        });
+        if (resolvedQuery.trim()) {
+          queries.push(resolvedQuery);
+        }
+      });
+    }
+
+    if (queries.length === 0) {
+      alert("No valid queries generated from input data.");
       return;
     }
+
     setStatus(Status.LOADING);
     setLoading(true);
-    const newResults: { [key: string]: { label: string; retrieved: any[] } } = {};
+    const newResults: { [key: string]: { label: string; retrieved: any[] } } =
+      {};
     const newLoading: { [key: string]: boolean } = {};
     methodItems.forEach((m) => {
       newLoading[m.key] = true;
-      // initialize results for each method
-      newResults[m.key] = { label: m.displayName || m.methodName, retrieved: [] };
+      newResults[m.key] = {
+        label: m.displayName || m.methodName,
+        retrieved: [],
+      };
     });
     setLoadingMethods(newLoading);
+
+    // Store results grouped by method and query
+    const groupedResults: {
+      [methodKey: string]: {
+        [query: string]: any[];
+      };
+    } = {};
+
+    // Initialize the grouped structure
+    methodItems.forEach((method) => {
+      groupedResults[method.key] = {};
+      queries.forEach((q) => {
+        groupedResults[method.key][q] = [];
+      });
+    });
 
     for (const method of methodItems) {
       try {
         const topKSetting = method.settings?.top_k ?? 5;
-        // For each non-empty query, call the API and append results.
-        for (const singleQuery of queries) {
-          if (!singleQuery.trim()) continue;
+        for (const resolvedQuery of queries) {
           const payload: any = {
-            query: singleQuery,
+            query: resolvedQuery,
             top_k: topKSetting,
             similarity_threshold: method.settings?.similarity_threshold ?? 0.7,
             chunks: chunkArr.map((chunk) => ({
               text: chunk.text,
               docTitle:
-                chunk.fill_history?.docTitle ||
-                chunk.metavars?.docTitle ||
-                "",
+                chunk.fill_history?.docTitle || chunk.metavars?.docTitle || "",
               chunkId:
-                chunk.fill_history?.chunkId ||
-                chunk.metavars?.chunkId ||
-                "",
+                chunk.fill_history?.chunkId || chunk.metavars?.chunkId || "",
+              chunkMethod: chunk.metavars?.chunkMethod || "",
             })),
             custom_method_key: method.key,
           };
@@ -923,41 +1183,53 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
             }
             payload.type = "retrieval";
           }
-          try {
-            const resp = await fetch("http://localhost:5000/retrieve", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(payload),
+
+          const resp = await fetch("http://localhost:5000/retrieve", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          if (!resp.ok) {
+            const errData = await resp.json();
+            throw new Error(errData.error || "Retrieval request failed");
+          }
+          const json = await resp.json();
+
+          const seenTexts = new Set<string>();
+          const uniqueChunks = json.retrieved.filter((chunk: any) => {
+            if (seenTexts.has(chunk.text)) return false;
+            seenTexts.add(chunk.text);
+            return true;
+          });
+
+          // Add chunks to the grouped structure
+          uniqueChunks.forEach((chunk: any) => {
+            groupedResults[method.key][resolvedQuery].push({
+              ...chunk,
+              text: `${chunk.text}`,
+              query: resolvedQuery,
             });
-            if (!resp.ok) {
-              const errData = await resp.json();
-              throw new Error(errData.error || "Retrieval request failed");
-            }
-            const json = await resp.json();
-            const baseLabel = method.displayName || method.methodName;
-            let label = baseLabel;
-            if (method.needsVector && method.vectorLib) {
-              if (
-                !baseLabel
-                  .toLowerCase()
-                  .endsWith(`(${method.vectorLib.toLowerCase()})`)
-              ) {
-                label = `${baseLabel} (${method.vectorLib})`;
-              }
-            }
-            // Prepend query text to each retrieved chunk
-            json.retrieved.forEach((chunk: any) => {
-              newResults[method.key].retrieved.push({
-                ...chunk,
-                text: `${chunk.text}`,
-              });
-            });
-            newResults[method.key].label = label;
-          } catch (err: any) {
-            console.error(`Error retrieving for ${method.methodName}:`, err);
-            alert(`Retrieval failed for query "${singleQuery}": ${err.message}`);
+          });
+        }
+
+        // Set the label
+        const baseLabel = method.displayName || method.methodName;
+        let label = baseLabel;
+        if (method.needsVector && method.vectorLib) {
+          if (
+            !baseLabel
+              .toLowerCase()
+              .endsWith(`(${method.vectorLib.toLowerCase()})`)
+          ) {
+            label = `${baseLabel} (${method.vectorLib})`;
           }
         }
+
+        // Flatten the grouped results for this method and add to newResults
+        newResults[method.key].label = label;
+        Object.values(groupedResults[method.key]).forEach((chunks) => {
+          newResults[method.key].retrieved.push(...chunks);
+        });
       } catch (err: any) {
         console.error(`Error retrieving for ${method.methodName}:`, err);
         alert(`Retrieval failed: ${err.message}`);
@@ -965,71 +1237,56 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
         setLoadingMethods((prev) => ({ ...prev, [method.key]: false }));
       }
     }
-    // Build output chunks from combined results
-    const outputChunks: Array<{
-      text: string;
-      similarity: number;
-      chunkId: string;
-    }> = [];
-    Object.entries(newResults).forEach(([_, methodResult]) => {
-      methodResult.retrieved.forEach((chunk) => {
-        outputChunks.push({
-          text: `Chunk ID: ${chunk.chunkId || "No ID"}\nRetrieval Method: ${methodResult.label}\n\n${chunk.text}`,
-          similarity: chunk.similarity,
-          chunkId: chunk.chunkId || "No ID",
-        });
-      });
-    });
-    setResults(newResults);
-    const buildLLMResponses = (
-      resultsData: { [key: string]: { label: string; retrieved: any[] } },
-    ): LLMResponse[] => {
-      const arr: LLMResponse[] = [];
-      Object.entries(resultsData).forEach(([methodKey, methodObj]) => {
-        const methodItem = methodItems.find((m) => m.key === methodKey);
-        const baseLabel =
-          methodItem?.displayName ||
-          methodItem?.methodName ||
-          "Retrieval Method";
-        let finalLabel = baseLabel;
-        if (methodItem?.needsVector && methodItem?.vectorLib) {
-          if (
-            !baseLabel
-              .toLowerCase()
-              .endsWith(`(${methodItem.vectorLib.toLowerCase()})`)
-          ) {
-            finalLabel = `${baseLabel} (${methodItem.vectorLib})`;
-          }
+
+    // Generate output chunks maintaining the grouping
+    const outputChunks: TemplateVarInfo[] = [];
+
+    Object.entries(groupedResults).forEach(([methodKey, methodQueries]) => {
+      const method = methodItems.find((m) => m.key === methodKey);
+      if (!method) return;
+
+      const baseLabel = method.displayName || method.methodName;
+      let methodLabel = baseLabel;
+      if (method.needsVector && method.vectorLib) {
+        if (
+          !baseLabel
+            .toLowerCase()
+            .endsWith(`(${method.vectorLib.toLowerCase()})`)
+        ) {
+          methodLabel = `${baseLabel} (${method.vectorLib})`;
         }
-        methodObj.retrieved.forEach((chunk) => {
-          const cUid = uuid();
-          arr.push({
-            uid: cUid,
-            prompt: `Retrieved by: ${finalLabel}`,
-            vars: {
-              similarity: chunk.similarity.toFixed(3),
-              docTitle: chunk.docTitle || "Untitled",
-              chunkId: chunk.chunkId || "",
-              chunkMethod: finalLabel,
-            },
-            responses: [`[Chunk ID: ${chunk.chunkId}]\n${chunk.text}`],
-            llm: finalLabel,
+      }
+
+      // For each query, create chunks with a group marker
+      Object.entries(methodQueries).forEach(([query, chunks]) => {
+        if (chunks.length === 0) return;
+
+        // Add all chunks for this method-query pair
+        chunks.forEach((chunk) => {
+          outputChunks.push({
+            text: chunk.text,
+            fill_history: {},
             metavars: {
-              retrievalMethod: finalLabel,
-              docTitle: chunk.docTitle,
-              chunkId: chunk.chunkId,
-              chunkMethod: finalLabel,
-              similarity: chunk.similarity,
+              retrievalMethod: methodLabel,
+              query: query,
+              similarity: chunk.similarity.toString(),
+              docTitle: chunk.docTitle || "",
+              chunkId: chunk.chunkId || "",
+              chunkMethod: chunk.chunkMethod || "",
+              methodGroup: methodKey,
+              queryGroup: query,
             },
+            uid: uuid(),
           });
         });
       });
-      return arr;
-    };
+    });
+
+    setResults(newResults);
     const newLLMResponses = buildLLMResponses(newResults);
     setJsonResponses(newLLMResponses);
     setDataPropsForNode(id, {
-      queries, // update to store multiple queries
+      query: queryText,
       methods: methodItems,
       results: newResults,
       output: outputChunks,
@@ -1037,91 +1294,136 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
     pingOutputNodes(id);
     setLoading(false);
     setStatus(Status.READY);
-  }, [queries, methodItems, id, setDataPropsForNode, pingOutputNodes]);
+  }, [
+    queryText,
+    methodItems,
+    id,
+    templateVars,
+    setDataPropsForNode,
+    pingOutputNodes,
+    pullInputData,
+  ]);
 
   const handleStopClick = useCallback(() => {
     setStatus(Status.NONE);
     setLoading(false);
-    refreshCancelId();
-  }, [refreshCancelId]);
+  }, []);
+
+  const handleRunClick = useCallback(() => {
+    runRetrieval();
+  }, [runRetrieval]);
+
+  const handleRunHover = useCallback(() => {
+    generateQueryPreviews(queryText);
+  }, [queryText, generateQueryPreviews]);
+
+  const handlePreviewHover = useCallback(() => {
+    generateQueryPreviews(queryText);
+  }, [queryText, generateQueryPreviews]);
 
   useEffect(() => {
-    setDataPropsForNode(id, { query: queries[0], methods: methodItems, results });
-  }, [id, queries, methodItems, results, setDataPropsForNode]);
+    setDataPropsForNode(id, {
+      query: queryText,
+      methods: methodItems,
+      results,
+    });
+    refreshTemplateHooks(queryText);
+    generateQueryPreviews(queryText); // Initial preview generation
+  }, [id, queryText, methodItems, results, setDataPropsForNode]);
+
+  const runTooltip =
+    status === Status.LOADING ? "Stop Retrieval" : "Run Retrieval";
 
   return (
     <BaseNode
       nodeId={id}
       classNames="retrieval-node"
-      style={{ width: "450px", backgroundColor: "rgba(255,255,255,0.9)" }}
+      style={{ width: "400px", backgroundColor: "rgba(255,255,255,0.9)" }}
     >
-      <Handle type="target" position={Position.Left} id="fields" />
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="fields"
+        style={{ top: "50%", left: "0px", transform: "translate(-50%, -50%)" }}
+      />
       <NodeLabel
         title={data.title || nodeDefaultTitle}
         nodeId={id}
         icon={nodeIcon}
-        status={status} // Pass the status state
-        handleRunClick={
-          status === Status.LOADING ? handleStopClick : runRetrieval
-        }
-        runButtonTooltip={
-          status === Status.LOADING ? "Stop Retrieval" : "Run Retrieval"
-        }
+        status={status}
+        isRunning={status === Status.LOADING}
+        handleRunClick={handleRunClick}
+        handleStopClick={handleStopClick}
+        handleRunHover={handleRunHover}
+        runButtonTooltip={runTooltip}
+        customButtons={[
+          <PromptListPopover
+            key="prompt-previews"
+            promptInfos={queryPreviews}
+            onHover={handlePreviewHover}
+            onClick={openInfoModal}
+          />,
+        ]}
       />
+      <Modal
+        title={`Query Previews (${queryPreviews.length} total)`}
+        size="xl"
+        opened={infoModalOpened}
+        onClose={closeInfoModal}
+        styles={{
+          header: { backgroundColor: "#FFD700" },
+          root: { position: "relative", left: "-5%" },
+        }}
+      >
+        <div style={{ padding: "16px" }}>
+          {queryPreviews.map((preview, idx) => (
+            <Text
+              key={idx}
+              size="xs"
+              style={{ whiteSpace: "pre-wrap", margin: "4px 0" }}
+            >
+              {preview}
+            </Text>
+          ))}
+        </div>
+      </Modal>
       <div style={{ padding: 8, position: "relative" }}>
-        {queries.map((q, idx) => (
-          <div
-            key={idx}
+        <div>
+          <Text size="xs" weight={500} mb={4}>
+            Search Queries
+          </Text>
+          <textarea
+            ref={setTextAreaRef}
+            className="query-field-fixed nodrag nowheel"
+            placeholder="Enter queries (one per line, use {} for variables)"
+            value={queryText}
+            onChange={handleQueryChange}
             style={{
-              display: "flex",
-              alignItems: "center",
-              marginBottom: 4,
+              width: "100%",
+              minHeight: "100px",
+              resize: "vertical",
+              padding: "8px",
+              fontSize: "14px",
+              border: "1px solid #ced4da",
+              borderRadius: "4px",
+              backgroundColor: "#fff",
+              boxSizing: "border-box",
             }}
-          >
-            <Textarea
-              className="prompt-field-fixed nodrag nowheel"
-              label={idx === 0 ? "Search Queries" : undefined}
-              placeholder={`Enter query ${idx + 1}...`}
-              value={q}
-              minRows={4}
-              maxRows={12}
-              autosize
-              style={{ flex: 1 }}
-              onChange={(e) => {
-                const newQueries = [...queries];
-                newQueries[idx] = e.currentTarget.value;
-                setQueries(newQueries);
-              }}
-            />
-            {queries.length > 1 && (
-              <ActionIcon
-                onClick={() =>
-                  setQueries(queries.filter((_, index) => index !== idx))
-                }
-                style={{ marginLeft: 4 }}
-                title="Delete this query"
-              >
-                <span style={{ fontSize: "16px", fontWeight: "bold" }}>X</span>
-              </ActionIcon>
-            )}
-            {idx === queries.length - 1 && (
-              <ActionIcon
-                onClick={() => setQueries([...queries, ""])}
-                style={{ marginLeft: 4 }}
-                title="Add another query"
-              >
-                <IconPlus size={16} />
-              </ActionIcon>
-            )}
-          </div>
-        ))}
+          />
+        </div>
+        <TemplateHooks
+          vars={templateVars}
+          nodeId={id}
+          startY={hooksY - 15}
+          position={Position.Left}
+        />
+        <hr />
         <RetrievalMethodListContainer
           initMethodItems={methodItems}
           onItemsChange={handleMethodsChange}
           loadingMethods={loadingMethods}
         />
       </div>
-
       <InspectFooter
         onClick={() => inspectorModalRef.current?.trigger()}
         showDrawerButton={false}
@@ -1130,8 +1432,12 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
         }}
         isDrawerOpen={false}
       />
-      <Handle type="source" position={Position.Right} id="output" />
-
+      <Handle
+        type="source"
+        position={Position.Right}
+        id="output"
+        style={{ top: "50%" }}
+      />
       <React.Suspense fallback={null}>
         <LLMResponseInspectorModal
           ref={inspectorModalRef}

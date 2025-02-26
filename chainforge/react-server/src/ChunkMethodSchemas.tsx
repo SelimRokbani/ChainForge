@@ -43,22 +43,22 @@ export const OverlappingOpenAITiktokenSchema: ModelSettingsDict = {
   description: "Chunk text using the OpenAI tiktoken library with overlap.",
   schema: {
     type: "object",
-    required: ["max_tokens", "overlap_tokens"],
+    required: ["chunk_size", "chunk_overlap"],
     properties: {
-      max_tokens: {
+      chunk_size: {
         type: "number",
         default: 1024,
-        title: "Max tokens per chunk",
+        title: "Chunk Size (Tokens)",
       },
-      overlap_tokens: {
+      chunk_overlap: {
         type: "number",
         default: 20,
-        title: "Overlap tokens",
+        title: "Overlap (Tokens)",
       },
     },
   },
   uiSchema: {
-    max_tokens: {
+    chunk_size: {
       "ui:widget": "range",
       "ui:options": {
         min: 256,
@@ -66,7 +66,7 @@ export const OverlappingOpenAITiktokenSchema: ModelSettingsDict = {
         step: 256,
       },
     },
-    overlap_tokens: {
+    chunk_overlap: {
       "ui:widget": "range",
       "ui:options": {
         min: 0,

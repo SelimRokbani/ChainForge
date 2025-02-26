@@ -126,22 +126,38 @@ const ChunkingNode: React.FC<ChunkingNodeProps> = ({ data, id }) => {
       allChunksByLibrary[library] = [];
       allResponsesByLibrary[library] = [];
 
+      // Track chunk counts per method
       const chunkCounters: Record<string, number> = {};
 
       for (const fileInfo of fileArr) {
+        // Initialize method count for this file
         const docTitle = fileInfo?.metavars?.filename || "Untitled";
 
         for (const method of methods) {
+          // Increment counter to ensure distinct method instances
           try {
             const formData = new FormData();
             formData.append("methodName", method.methodName);
             formData.append("library", method.library);
             formData.append("text", fileInfo.text || "");
 
-            // Add the user settings
-            Object.entries(method.settings ?? {}).forEach(([k, v]) => {
-              formData.append(k, String(v));
-            });
+            // Add the user settings 
+            if (method.settings) {
+              // Extract specific settings based on the method type
+              const { baseMethod } = method;
+              const settingsObj = { ...method.settings };
+              
+              // Debug the settings
+              console.log(`Sending settings for ${method.methodName}:`, settingsObj);
+              
+              // Add all settings from the settings object
+              Object.entries(settingsObj).forEach(([k, v]) => {
+                // Only send relevant settings (not UI-specific ones)
+                if (k !== 'displayName' && k !== 'emoji') {
+                  formData.append(k, String(v));
+                }
+              });
+            }
 
             const res = await fetch("http://localhost:5000/process", {
               method: "POST",
@@ -154,17 +170,26 @@ const ChunkingNode: React.FC<ChunkingNodeProps> = ({ data, id }) => {
             }
 
             const json = await res.json();
-            const chunksArr = json.chunks as any[];
+            const chunks = json.chunks as string[];
+
+            // We'll build chunk IDs for each doc
             const docTitleSafe = docTitle.replace(/\W+/g, "_");
-            const displayName = method.settings?.displayName || method.methodName;
+            const methodSafe = method.methodName.replace(/\W+/g, "_");
+            const libSafe = library.replace(/\W+/g, "_");
+            // Compute displayed name from settings if available.
+            const displayName =
+              method.settings?.displayName || method.methodName;
+
+            // Initialize the counter for this display name if nonexistent
             if (chunkCounters[displayName] === undefined) {
               chunkCounters[displayName] = 0;
             }
-            chunksArr.forEach((cObj) => {
-              const cText = typeof cObj === "object" ? cObj.text : cObj;
-              const processTime = typeof cObj === "object" && cObj.processTime ? cObj.processTime : 0;
+
+            chunks.forEach((cText) => {
+              // Use the displayName-based counter
               const cId = `${displayName}_${chunkCounters[displayName]}`;
               chunkCounters[displayName]++;
+              // Create the chunk object with displayed name in fill_history.
               const chunkVar: TemplateVarInfo = {
                 text: cText,
                 prompt: "",
@@ -179,7 +204,6 @@ const ChunkingNode: React.FC<ChunkingNodeProps> = ({ data, id }) => {
                   docTitle,
                   chunkLibrary: library,
                   chunkId: cId,
-                  processTime, 
                 },
               };
 
@@ -195,7 +219,6 @@ const ChunkingNode: React.FC<ChunkingNodeProps> = ({ data, id }) => {
                   docTitle,
                   chunkLibrary: library,
                   chunkId: cId,
-                  processTime, 
                 },
               };
 
@@ -305,7 +328,7 @@ const ChunkingNode: React.FC<ChunkingNodeProps> = ({ data, id }) => {
               color: "black",
               padding: "0px 10px",
               borderRadius: "4px",
-              cursor: "pointer"
+              cursor: "pointer",
             }}
           >
             &#9660;
