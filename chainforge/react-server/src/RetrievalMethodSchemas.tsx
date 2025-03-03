@@ -1,4 +1,47 @@
 import { ModelSettingsDict } from "./backend/typing";
+import { Select } from "@mantine/core";
+
+// Available embedding models
+export const embeddingProviders = [
+  {
+    label: "🤗 HuggingFace Transformers",
+    value: "huggingface",
+    models: [
+      "sentence-transformers/all-MiniLM-L6-v2",
+      "sentence-transformers/all-mpnet-base-v2",
+      "thenlper/gte-large",
+      "BAAI/bge-large-en-v1.5",
+    ],
+  },
+  {
+    label: "🤖 OpenAI Embeddings",
+    value: "openai",
+    models: [
+      "text-embedding-ada-002",
+      "text-embedding-3-small",
+      "text-embedding-3-large",
+    ],
+  },
+  {
+    label: "💬 Cohere Embeddings",
+    value: "cohere",
+    models: [
+      "embed-english-v2.0",
+      "embed-multilingual-v2.0",
+      "embed-english-light-v2.0",
+    ],
+  },
+  {
+    label: "🧠 Sentence Transformers",
+    value: "sentence-transformers",
+    models: [
+      "all-MiniLM-L6-v2",
+      "all-mpnet-base-v2",
+      "paraphrase-MiniLM-L3-v2",
+      "all-distilroberta-v1"
+    ],
+  },
+];
 
 /**
  * BM25 Retrieval
@@ -205,6 +248,11 @@ export const CosineSimilaritySchema: ModelSettingsDict = {
         default: 0.7,
         title: "Similarity Threshold",
       },
+      embeddingModel: {
+        type: "string",
+        title: "Embedding Model",
+        default: "",
+      },
     },
   },
   uiSchema: {
@@ -224,16 +272,20 @@ export const CosineSimilaritySchema: ModelSettingsDict = {
         step: 0.05,
       },
     },
+    embeddingModel: {
+      "ui:widget": "select",
+    },
   },
   postprocessors: {},
 };
 
 /**
- * Sentence Embeddings Schema
+ * Manhattan Distance Schema
  */
-export const SentenceEmbeddingsSchema: ModelSettingsDict = {
-  fullName: "Sentence Embeddings",
-  description: "Uses sentence-level embeddings for retrieval",
+export const ManhattanDistanceSchema: ModelSettingsDict = {
+  fullName: "Manhattan distance",
+  description:
+    "Retrieves documents using manhattan distance between embeddings",
   schema: {
     type: "object",
     required: ["top_k", "similarity_threshold", "pooling_strategy"],
@@ -253,6 +305,11 @@ export const SentenceEmbeddingsSchema: ModelSettingsDict = {
         default: "mean",
         title: "Pooling Strategy",
         enum: ["mean", "max", "cls"],
+      },
+      embeddingModel: {
+        type: "string",
+        title: "Embedding Model",
+        default: "",
       },
     },
   },
@@ -276,16 +333,20 @@ export const SentenceEmbeddingsSchema: ModelSettingsDict = {
     pooling_strategy: {
       "ui:widget": "select",
     },
+    embeddingModel: {
+      "ui:widget": "select",
+    },
   },
   postprocessors: {},
 };
 
 /**
- * Custom Vector Search Schema
+ * Euclidean Distance Schema
  */
-export const CustomVectorSchema: ModelSettingsDict = {
-  fullName: "Custom Vector Search",
-  description: "Use custom vector representations for retrieval",
+export const EuclideanDistanceSchema: ModelSettingsDict = {
+  fullName: "Euclidean distance",
+  description:
+    "Retrieves documents using euclidean distance between embeddings",
   schema: {
     type: "object",
     required: ["top_k", "similarity_threshold", "vector_dimension"],
@@ -304,6 +365,11 @@ export const CustomVectorSchema: ModelSettingsDict = {
         type: "number",
         default: 768,
         title: "Vector Dimension",
+      },
+      embeddingModel: {
+        type: "string",
+        title: "Embedding Model",
+        default: "",
       },
     },
   },
@@ -332,6 +398,9 @@ export const CustomVectorSchema: ModelSettingsDict = {
         step: 64,
       },
     },
+    embeddingModel: {
+      "ui:widget": "select",
+    },
   },
   postprocessors: {},
 };
@@ -341,7 +410,8 @@ export const CustomVectorSchema: ModelSettingsDict = {
  */
 export const ClusteredEmbeddingSchema: ModelSettingsDict = {
   fullName: "Clustered Embedding",
-  description: "Uses clustering for efficient embedding-based retrieval",
+  description:
+    "Retrieves documents using cosine similarity between a hybrid of sentence and topic embeddings",
   schema: {
     type: "object",
     required: ["top_k", "similarity_threshold", "n_clusters"],
@@ -360,6 +430,11 @@ export const ClusteredEmbeddingSchema: ModelSettingsDict = {
         type: "number",
         default: 5,
         title: "Number of Clusters",
+      },
+      embeddingModel: {
+        type: "string",
+        title: "Embedding Model",
+        default: "",
       },
     },
   },
@@ -387,6 +462,9 @@ export const ClusteredEmbeddingSchema: ModelSettingsDict = {
         max: 20,
         step: 1,
       },
+    },
+    embeddingModel: {
+      "ui:widget": "select",
     },
   },
   postprocessors: {},
@@ -461,8 +539,8 @@ export const RetrievalMethodSchemas: {
   boolean: BooleanSearchSchema,
   overlap: KeywordOverlapSchema,
   cosine: CosineSimilaritySchema,
-  sentenceEmbeddings: SentenceEmbeddingsSchema,
-  customVector: CustomVectorSchema,
+  manhattan: ManhattanDistanceSchema,
+  euclidean: EuclideanDistanceSchema,
   clustered: ClusteredEmbeddingSchema,
   faiss: FAISSSchema,
 };
@@ -478,7 +556,7 @@ export const retrievalMethodGroups = [
         library: "BM25",
         emoji: "📊",
         group: "Keyword-based Retrieval",
-        needsVector: false,
+        needsEmbeddingModel: false,
       },
       {
         baseMethod: "tfidf",
@@ -486,7 +564,7 @@ export const retrievalMethodGroups = [
         library: "TF-IDF",
         emoji: "📈",
         group: "Keyword-based Retrieval",
-        needsVector: false,
+        needsEmbeddingModel: false,
       },
       {
         baseMethod: "boolean",
@@ -494,7 +572,7 @@ export const retrievalMethodGroups = [
         library: "Boolean Search",
         emoji: "🔍",
         group: "Keyword-based Retrieval",
-        needsVector: false,
+        needsEmbeddingModel: false,
       },
       {
         baseMethod: "overlap",
@@ -502,7 +580,7 @@ export const retrievalMethodGroups = [
         library: "KeywordOverlap",
         emoji: "🎯",
         group: "Keyword-based Retrieval",
-        needsVector: false,
+        needsEmbeddingModel: false,
       },
     ],
   },
@@ -518,17 +596,17 @@ export const retrievalMethodGroups = [
         needsEmbeddingModel: true,
       },
       {
-        baseMethod: "sentenceEmbeddings",
-        methodName: "Sentence Embeddings",
-        library: "Sentence",
+        baseMethod: "manhattan",
+        methodName: "Manhattan distance",
+        library: "Manhattan",
         emoji: "🔤",
         group: "Embedding-based Retrieval",
         needsEmbeddingModel: true,
       },
       {
-        baseMethod: "customVector",
-        methodName: "Custom Vector Search",
-        library: "Custom",
+        baseMethod: "euclidean",
+        methodName: "Euclidean distance",
+        library: "Euclidean",
         emoji: "🎯",
         group: "Embedding-based Retrieval",
         needsEmbeddingModel: true,
@@ -555,29 +633,5 @@ export const retrievalMethodGroups = [
         needsEmbeddingModel: true,
       },
     ],
-  },
-];
-
-// Available embedding models
-export const embeddingModels = [
-  {
-    label: "HuggingFace Transformers",
-    value: "HuggingFace Transformers",
-    emoji: "🤗",
-  },
-  {
-    label: "OpenAI Embeddings",
-    value: "OpenAI Embeddings",
-    emoji: "🤖",
-  },
-  {
-    label: "Cohere Embeddings",
-    value: "Cohere Embeddings",
-    emoji: "💬",
-  },
-  {
-    label: "Sentence Transformers",
-    value: "Sentence Transformers",
-    emoji: "🧠",
   },
 ];

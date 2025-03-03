@@ -18,7 +18,12 @@ import {
   Box,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
-import { IconPlus, IconTrash, IconSettings } from "@tabler/icons-react";
+import {
+  IconPlus,
+  IconTrash,
+  IconSettings,
+  IconChevronRight,
+} from "@tabler/icons-react";
 import Form from "@rjsf/core";
 import { RJSFSchema, UiSchema } from "@rjsf/utils";
 import validator from "@rjsf/validator-ajv8";
@@ -26,7 +31,7 @@ import { v4 as uuid } from "uuid";
 import {
   RetrievalMethodSchemas,
   retrievalMethodGroups,
-  embeddingModels,
+  embeddingProviders,
 } from "./RetrievalMethodSchemas";
 
 // Individual retrieval method item interface
@@ -37,7 +42,7 @@ export interface RetrievalMethodSpec {
   library: string;
   emoji?: string;
   needsEmbeddingModel?: boolean;
-  embeddingModel?: string;
+  embeddingProvider?: string;
   settings?: Record<string, any>;
 }
 
@@ -58,16 +63,43 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   const schema = RetrievalMethodSchemas[methodItem.baseMethod];
   if (!schema) return null;
 
+  // If this method needs embedding models, modify the schema to include
+  // the appropriate embedding model options based on the selected provider
+  let finalSchema = schema.schema;
+  const finalUiSchema = schema.uiSchema;
+
+  if (methodItem.needsEmbeddingModel && methodItem.embeddingProvider) {
+    const provider = embeddingProviders.find(
+      (p) => p.value === methodItem.embeddingProvider,
+    );
+    if (provider) {
+      // Clone the schema to avoid modifying the original
+      finalSchema = {
+        ...schema.schema,
+        properties: {
+          ...schema.schema.properties,
+          // Add the embedding model property with enum options from the selected provider
+          embeddingModel: {
+            type: "string",
+            title: "Embedding Model",
+            enum: provider.models,
+            default: provider.models[0],
+          },
+        },
+      };
+    }
+  }
+
   return (
     <Modal
       opened={opened}
       onClose={onClose}
-      title={`Settings: ${methodItem.methodName}`}
+      title={`Settings: ${methodItem.methodName}${methodItem.embeddingProvider ? ` (${methodItem.embeddingProvider})` : ""}`}
       size="lg"
     >
       <Form<any, RJSFSchema, any>
-        schema={schema.schema as RJSFSchema}
-        uiSchema={schema.uiSchema as UiSchema}
+        schema={finalSchema as RJSFSchema}
+        uiSchema={finalUiSchema as UiSchema}
         validator={validator}
         formData={methodItem.settings}
         onChange={(e) => onSettingsUpdate(e.formData)}
@@ -83,14 +115,12 @@ interface RetrievalMethodListItemProps {
   methodItem: RetrievalMethodSpec;
   onRemove: (key: string) => void;
   onSettingsUpdate: (key: string, settings: any) => void;
-  onEmbeddingModelUpdate?: (key: string, model: string) => void;
 }
 
 const RetrievalMethodListItem: React.FC<RetrievalMethodListItemProps> = ({
   methodItem,
   onRemove,
   onSettingsUpdate,
-  onEmbeddingModelUpdate,
 }) => {
   const [opened, { open, close }] = useDisclosure(false);
 
@@ -103,29 +133,6 @@ const RetrievalMethodListItem: React.FC<RetrievalMethodListItemProps> = ({
               {methodItem.emoji && `${methodItem.emoji} `}
               {methodItem.methodName}
             </Text>
-            {methodItem.needsEmbeddingModel && (
-              <Select
-                size="xs"
-                placeholder="Select embedding model"
-                value={methodItem.embeddingModel}
-                onChange={(value) =>
-                  onEmbeddingModelUpdate?.(methodItem.key, value || "")
-                }
-                data={embeddingModels}
-                styles={(theme) => ({
-                  root: {
-                    flex: 1,
-                    minWidth: 200,
-                  },
-                  input: {
-                    minHeight: 28,
-                  },
-                })}
-                withinPortal
-                searchable
-                clearable
-              />
-            )}
           </Group>
         </Box>
         <Group spacing={4} noWrap>
@@ -210,34 +217,55 @@ export const RetrievalMethodListContainer = forwardRef<
     [methodItems, notifyItemsChanged],
   );
 
-  const handleEmbeddingModelUpdate = useCallback(
-    (key: string, model: string) => {
-      const newItems = methodItems.map((m) =>
-        m.key === key ? { ...m, embeddingModel: model } : m,
-      );
-      setMethodItems(newItems);
-      notifyItemsChanged(newItems);
-    },
-    [methodItems, notifyItemsChanged],
-  );
-
   const addMethod = useCallback(
-    (m: Omit<RetrievalMethodSpec, "key" | "settings">) => {
-      const newItem: RetrievalMethodSpec = {
-        key: uuid(),
-        baseMethod: m.baseMethod,
-        methodName: m.methodName,
-        library: m.library,
-        emoji: m.emoji,
-        needsEmbeddingModel: m.needsEmbeddingModel,
-        settings: {},
-      };
-      const newItems = [...methodItems, newItem];
-      setMethodItems(newItems);
-      notifyItemsChanged(newItems);
-    },
-    [methodItems, notifyItemsChanged],
-  );
+  (m: Omit<RetrievalMethodSpec, "key" | "settings">, embeddingProviderValue?: string) => {
+    // Find the provider with this value to get its label and models
+    const provider = embeddingProviderValue 
+      ? embeddingProviders.find(p => p.value === embeddingProviderValue) 
+      : undefined;
+
+    // Get the schema for this method to access default values
+    const methodSchema = RetrievalMethodSchemas[m.baseMethod];
+    
+    // Initialize settings with default values from schema
+    let defaultSettings = {} as Record<string, any>;;
+    
+    // Extract default values from schema if available
+    if (methodSchema?.schema?.properties) {
+      const schemaProps = methodSchema.schema.properties;
+      defaultSettings = Object.entries(schemaProps).reduce((acc, [key, prop]) => {
+        if ('default' in prop) {
+          acc[key] = prop.default;
+        }
+        return acc;
+      }, {} as Record<string, any>);
+    }
+    
+    // If this is an embedding-based method, set the default embedding model
+    if (m.needsEmbeddingModel && provider?.models && provider.models.length > 0) {
+      defaultSettings.embeddingModel = provider.models[0];
+    }
+
+    const newItem: RetrievalMethodSpec = {
+      key: uuid(),
+      baseMethod: m.baseMethod,
+      methodName: m.methodName,
+      library: m.library,
+      emoji: m.emoji,
+      needsEmbeddingModel: m.needsEmbeddingModel,
+      ...(m.needsEmbeddingModel && embeddingProviderValue ? { 
+        embeddingProvider: provider?.value || "",
+        
+      } : {}),
+      settings: defaultSettings, // Use initialized default settings
+    };
+    
+    const newItems = [...methodItems, newItem];
+    setMethodItems(newItems);
+    notifyItemsChanged(newItems);
+  },
+  [methodItems, notifyItemsChanged],
+);
 
   const [menuOpened, setMenuOpened] = useState(false);
 
@@ -268,18 +296,56 @@ export const RetrievalMethodListContainer = forwardRef<
             {retrievalMethodGroups.map((group, groupIdx) => (
               <React.Fragment key={group.label}>
                 <Menu.Label>{group.label}</Menu.Label>
-                {group.items.map((item) => (
-                  <Menu.Item
-                    key={item.baseMethod}
-                    icon={item.emoji ? <Text>{item.emoji}</Text> : undefined}
-                    onClick={() => {
-                      addMethod(item);
-                      setMenuOpened(false);
-                    }}
-                  >
-                    {item.library}
-                  </Menu.Item>
-                ))}
+                {group.items.map((item) => {
+                  // For methods that need embedding models, show a nested menu
+                  if (item.needsEmbeddingModel) {
+                    return (
+                      <Menu
+                        key={item.baseMethod}
+                        trigger="hover"
+                        position="right-start"
+                      >
+                        <Menu.Target>
+                          <Menu.Item
+                            icon={
+                              item.emoji ? <Text>{item.emoji}</Text> : undefined
+                            }
+                            rightSection={<IconChevronRight size={14} />}
+                          >
+                            {item.methodName}
+                          </Menu.Item>
+                        </Menu.Target>
+                        <Menu.Dropdown>
+                          {embeddingProviders.map((provider) => (
+                            <Menu.Item
+                              key={provider.value}
+                              onClick={() => {
+                                addMethod(item, provider.value);
+                                setMenuOpened(false);
+                              }}
+                            >
+                              {provider.label}
+                            </Menu.Item>
+                          ))}
+                        </Menu.Dropdown>
+                      </Menu>
+                    );
+                  }
+
+                  // For methods that don't need embeddings, keep the original behavior
+                  return (
+                    <Menu.Item
+                      key={item.baseMethod}
+                      icon={item.emoji ? <Text>{item.emoji}</Text> : undefined}
+                      onClick={() => {
+                        addMethod(item);
+                        setMenuOpened(false);
+                      }}
+                    >
+                      {item.library}
+                    </Menu.Item>
+                  );
+                })}
                 {groupIdx < retrievalMethodGroups.length - 1 && (
                   <Divider my="xs" />
                 )}
@@ -300,7 +366,6 @@ export const RetrievalMethodListContainer = forwardRef<
             methodItem={item}
             onRemove={handleRemoveMethod}
             onSettingsUpdate={handleSettingsUpdate}
-            onEmbeddingModelUpdate={handleEmbeddingModelUpdate}
           />
         ))
       )}
