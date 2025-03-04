@@ -1010,6 +1010,66 @@ def handle_clustered(chunk_objs, chunk_embeddings, queries, query_embeddings, se
             results[query] = retrieved
     return results
 
+import faiss
+import numpy as np
+import os
+
+@RetrievalMethodRegistry.register("faiss")
+def handle_faiss(chunk_objs, chunk_embeddings, queries, query_embeddings, settings):
+    """
+    Retrieve chunks using FAISS for fast similarity search.
+    
+    Supports both creating a new FAISS index and loading an existing one.
+    """
+    top_k = settings.get("top_k", 5)  # Number of results
+    similarity_threshold = settings.get("similarity_threshold", 0.7)  # Min similarity required
+    faiss_mode = settings.get("faissMode", "create")  # Mode: "create" or "load"
+    faiss_path = settings.get("faissPath", "")  # Path to FAISS index
+
+    dimension = len(chunk_embeddings[0])  # Embedding vector size
+
+    # Step 1: Initialize FAISS Index (Create or Load)
+    if faiss_mode == "load" and os.path.exists(faiss_path):
+        index = faiss.read_index(faiss_path)  # Load existing FAISS index
+    else:
+        index = faiss.IndexFlatL2(dimension)  # L2 distance by default
+        chunk_embeddings_np = np.array(chunk_embeddings, dtype=np.float32)
+        index.add(chunk_embeddings_np)  # Add embeddings to index
+
+        # Save index if in "create" mode and path is provided
+        if faiss_mode == "create" and faiss_path:
+            faiss.write_index(index, faiss_path)
+
+    # Step 2: Perform FAISS Retrieval
+    results = {}
+
+    for query, query_emb in zip(queries, query_embeddings):
+        query_embedding_np = np.array([query_emb], dtype=np.float32)
+        
+        # Search for nearest neighbors
+        distances, indices = index.search(query_embedding_np, top_k)
+
+        # Step 3: Convert results into structured format
+        retrieved = []
+        for i in range(len(indices[0])):
+            chunk_idx = indices[0][i]
+            similarity_score = 1 / (1 + distances[0][i])  # Convert L2 distance to similarity
+            
+            # Apply similarity threshold
+            if similarity_score >= similarity_threshold:
+                chunk = chunk_objs[chunk_idx]
+                retrieved.append({
+                    "text": chunk.get("text", ""),
+                    "similarity": float(similarity_score),
+                    "docTitle": chunk.get("docTitle", ""),
+                    "chunkId": chunk.get("chunkId", ""),
+                })
+
+        results[query] = retrieved
+
+    return results
+
+
 @app.route("/retrieve", methods=["POST"])
 def retrieve():
     """
@@ -1176,4 +1236,4 @@ def retrieve():
     return jsonify({"results": results}), 200
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True, port=5001)
