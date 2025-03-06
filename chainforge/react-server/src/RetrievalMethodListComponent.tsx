@@ -218,54 +218,65 @@ export const RetrievalMethodListContainer = forwardRef<
   );
 
   const addMethod = useCallback(
-  (m: Omit<RetrievalMethodSpec, "key" | "settings">, embeddingProviderValue?: string) => {
-    // Find the provider with this value to get its label and models
-    const provider = embeddingProviderValue 
-      ? embeddingProviders.find(p => p.value === embeddingProviderValue) 
-      : undefined;
+    (
+      m: Omit<RetrievalMethodSpec, "key" | "settings">,
+      embeddingProviderValue?: string,
+    ) => {
+      // Find the provider with this value to get its label and models
+      const provider = embeddingProviderValue
+        ? embeddingProviders.find((p) => p.value === embeddingProviderValue)
+        : undefined;
 
-    // Get the schema for this method to access default values
-    const methodSchema = RetrievalMethodSchemas[m.baseMethod];
-    
-    // Initialize settings with default values from schema
-    let defaultSettings = {} as Record<string, any>;;
-    
-    // Extract default values from schema if available
-    if (methodSchema?.schema?.properties) {
-      const schemaProps = methodSchema.schema.properties;
-      defaultSettings = Object.entries(schemaProps).reduce((acc, [key, prop]) => {
-        if ('default' in prop) {
-          acc[key] = prop.default;
-        }
-        return acc;
-      }, {} as Record<string, any>);
-    }
-    
-    // If this is an embedding-based method, set the default embedding model
-    if (m.needsEmbeddingModel && provider?.models && provider.models.length > 0) {
-      defaultSettings.embeddingModel = provider.models[0];
-    }
+      // Get the schema for this method to access default values
+      const methodSchema = RetrievalMethodSchemas[m.baseMethod];
 
-    const newItem: RetrievalMethodSpec = {
-      key: uuid(),
-      baseMethod: m.baseMethod,
-      methodName: m.methodName,
-      library: m.library,
-      emoji: m.emoji,
-      needsEmbeddingModel: m.needsEmbeddingModel,
-      ...(m.needsEmbeddingModel && embeddingProviderValue ? { 
-        embeddingProvider: provider?.value || "",
-        
-      } : {}),
-      settings: defaultSettings, // Use initialized default settings
-    };
-    
-    const newItems = [...methodItems, newItem];
-    setMethodItems(newItems);
-    notifyItemsChanged(newItems);
-  },
-  [methodItems, notifyItemsChanged],
-);
+      // Initialize settings with default values from schema
+      let defaultSettings = {} as Record<string, any>;
+
+      // Extract default values from schema if available
+      if (methodSchema?.schema?.properties) {
+        const schemaProps = methodSchema.schema.properties;
+        defaultSettings = Object.entries(schemaProps).reduce(
+          (acc, [key, prop]) => {
+            if ("default" in prop) {
+              acc[key] = prop.default;
+            }
+            return acc;
+          },
+          {} as Record<string, any>,
+        );
+      }
+
+      // If this is an embedding-based method, set the default embedding model
+      if (
+        m.needsEmbeddingModel &&
+        provider?.models &&
+        provider.models.length > 0
+      ) {
+        defaultSettings.embeddingModel = provider.models[0];
+      }
+
+      const newItem: RetrievalMethodSpec = {
+        key: uuid(),
+        baseMethod: m.baseMethod,
+        methodName: m.methodName,
+        library: m.library,
+        emoji: m.emoji,
+        needsEmbeddingModel: m.needsEmbeddingModel,
+        ...(m.needsEmbeddingModel && embeddingProviderValue
+          ? {
+              embeddingProvider: provider?.value || "",
+            }
+          : {}),
+        settings: defaultSettings, // Use initialized default settings
+      };
+
+      const newItems = [...methodItems, newItem];
+      setMethodItems(newItems);
+      notifyItemsChanged(newItems);
+    },
+    [methodItems, notifyItemsChanged],
+  );
 
   const [menuOpened, setMenuOpened] = useState(false);
 

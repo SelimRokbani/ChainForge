@@ -27,3 +27,4 @@ whoosh
 langchain-openai
 faiss-cpu
 langchain-community
+pinecone

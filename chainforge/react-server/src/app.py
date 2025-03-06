@@ -1013,56 +1013,80 @@ def handle_clustered(chunk_objs, chunk_embeddings, queries, query_embeddings, se
 import faiss
 import numpy as np
 import os
+from langchain_community.vectorstores import FAISS
 
 @RetrievalMethodRegistry.register("faiss")
 def handle_faiss(chunk_objs, chunk_embeddings, queries, query_embeddings, settings):
     """
-    Retrieve chunks using FAISS for fast similarity search.
+    Retrieve chunks using LangChain FAISS for fast similarity search.
     
+    Uses pre-computed embeddings instead of creating new ones.
     Supports both creating a new FAISS index and loading an existing one.
     """
-    top_k = settings.get("top_k", 5)  # Number of results
-    similarity_threshold = settings.get("similarity_threshold", 0.7)  # Min similarity required
-    faiss_mode = settings.get("faissMode", "create")  # Mode: "create" or "load"
+    top_k = settings.get("top_k", 5)
+    similarity_threshold = settings.get("similarity_threshold", 0)
+    faiss_mode = settings.get("faissMode", "create")  # "create" or "load"
     faiss_path = settings.get("faissPath", "")  # Path to FAISS index
 
-    dimension = len(chunk_embeddings[0])  # Embedding vector size
+    # Convert embeddings to numpy arrays if they aren't already
+    chunk_embeddings = np.array(chunk_embeddings).astype('float32')
+    query_embeddings = np.array(query_embeddings).astype('float32')
 
-    # Step 1: Initialize FAISS Index (Create or Load)
-    if faiss_mode == "load" and os.path.exists(faiss_path):
-        index = faiss.read_index(faiss_path)  # Load existing FAISS index
-    else:
-        index = faiss.IndexFlatL2(dimension)  # L2 distance by default
-        chunk_embeddings_np = np.array(chunk_embeddings, dtype=np.float32)
-        index.add(chunk_embeddings_np)  # Add embeddings to index
+    # Step 1: Initialize LangChain FAISS Vector Store
+    if faiss_mode == "load":
+        if not os.path.exists(faiss_path):
+            print(f"Error: FAISS index not found at {faiss_path}")
+            return {}
 
-        # Save index if in "create" mode and path is provided
+        try:
+            # For loading, we need an embedding function, but it won't be used for retrieval
+            # Using a dummy embedding function since we already have embeddings
+            dummy_embeddings = lambda x: chunk_embeddings
+            vector_store = FAISS.load_local(faiss_path, dummy_embeddings, allow_dangerous_deserialization=True)
+        except Exception as e:
+            print(f"Error loading FAISS index: {e}")
+            return {}
+    elif faiss_mode == "create":
+        # Creating a new FAISS index with pre-computed embeddings
+        texts = [chunk["text"] for chunk in chunk_objs]
+        metadatas = [{"docTitle": chunk.get("docTitle", ""), "chunkId": chunk.get("chunkId", "")} for chunk in chunk_objs]
+
+        # Create FAISS index directly from pre-computed embeddings
+        vector_store = FAISS.from_embeddings(
+            text_embeddings=zip(texts, chunk_embeddings),
+            embedding=None,  # No embedding model needed since we have embeddings
+            metadatas=metadatas
+        )
+
+        # Save the FAISS index if mode is "create" and path is provided
         if faiss_mode == "create" and faiss_path:
-            faiss.write_index(index, faiss_path)
+            vector_store.save_local(faiss_path)
 
-    # Step 2: Perform FAISS Retrieval
+    # Step 2: Perform FAISS Retrieval using pre-computed query embeddings
     results = {}
 
-    for query, query_emb in zip(queries, query_embeddings):
-        query_embedding_np = np.array([query_emb], dtype=np.float32)
+    for query, q_embedding in zip(queries, query_embeddings):
+        # Reshape query embedding to 2D array as required by FAISS
+        q_embedding = q_embedding.reshape(1, -1)
         
-        # Search for nearest neighbors
-        distances, indices = index.search(query_embedding_np, top_k)
+        # Perform similarity search with pre-computed embedding
+        search_results = vector_store.similarity_search_with_score_by_vector(
+            embedding=q_embedding[0],  # Pass single embedding vector
+            k=top_k
+        )
 
         # Step 3: Convert results into structured format
         retrieved = []
-        for i in range(len(indices[0])):
-            chunk_idx = indices[0][i]
-            similarity_score = 1 / (1 + distances[0][i])  # Convert L2 distance to similarity
-            
+        for doc, score in search_results:
+            similarity_score = float(score)  # Ensure it's a standard float
+
             # Apply similarity threshold
             if similarity_score >= similarity_threshold:
-                chunk = chunk_objs[chunk_idx]
                 retrieved.append({
-                    "text": chunk.get("text", ""),
-                    "similarity": float(similarity_score),
-                    "docTitle": chunk.get("docTitle", ""),
-                    "chunkId": chunk.get("chunkId", ""),
+                    "text": doc.page_content,
+                    "similarity": similarity_score,
+                    "docTitle": doc.metadata.get("docTitle", ""),
+                    "chunkId": doc.metadata.get("chunkId", ""),
                 })
 
         results[query] = retrieved
@@ -1212,6 +1236,7 @@ def retrieve():
             
             try:
                 handler = RetrievalMethodRegistry.get_handler(base_method)
+                print(handler)
                 if not handler:
                     raise ValueError(f"Unknown method: {base_method}")                    
                 retrieved = handler(chunks, chunk_embeddings, queries, query_embeddings, method.get("settings", {}))
