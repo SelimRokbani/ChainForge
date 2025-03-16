@@ -116,65 +116,12 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ id, data }) => {
     [id, setDataPropsForNode],
   );
 
-  // Build LLM responses for inspector
-  const buildLLMResponses = useCallback(
-    (results: Record<string, any>): LLMResponse[] => {
-      const responses: LLMResponse[] = [];
-
-      Object.entries(results).forEach(([methodKey, result]) => {
-        // Handle the nested structure of retrieved results
-        if (result.retrieved && typeof result.retrieved === "object") {
-          // For each query in the retrieved results
-          Object.entries(result.retrieved).forEach(
-            ([queryKey, queryResults]) => {
-              // Make sure queryResults is an array before proceeding
-              if (!Array.isArray(queryResults)) return;
-
-              responses.push({
-                uid: `${methodKey}-${queryKey}-${Date.now()}`,
-                prompt: queryKey, // Use the query key as the prompt
-                vars: {},
-                metavars: {
-                  method: methodKey,
-                  query: queryKey,
-                  ...result.metavars,
-                },
-                responses: queryResults.map(
-                  (item: any) =>
-                    `[Score: ${item.similarity?.toFixed(4) || "N/A"}] ${item.text || item.content || JSON.stringify(item)}`,
-                ),
-                llm: methodKey,
-              });
-            },
-          );
-        } else if (result.error) {
-          // Handle error case
-          responses.push({
-            uid: `${methodKey}-error-${Date.now()}`,
-            prompt: query,
-            vars: {},
-            metavars: {
-              method: methodKey,
-              error: result.error,
-            },
-            responses: [`Error: ${result.error}`],
-            llm: methodKey,
-          });
-        }
-      });
-
-      return responses;
-    },
-    [results],
-  );
-
   // Main retrieval function
   const runRetrieval = useCallback(async () => {
     if (methodItems.length === 0) {
       showAlert?.("Please add at least one retrieval method");
       return;
     }
-
     setLoading(true);
 
     try {
@@ -197,7 +144,15 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ id, data }) => {
       if (!inputData.chunks || !inputData.queries) {
         throw new Error("No input chunks or queries found");
       }
-
+      // Normalize queries to handle both string arrays and object arrays
+      const normalizedQueries = inputData.queries.map((query) => {
+        // If query is an object with a text property, extract it
+        if (typeof query === "object" && query !== null && "text" in query) {
+          return query.text;
+        }
+        // Otherwise, return as is (assuming it's a string)
+        return query;
+      });
       // Make the API request
       const response = await fetch("http://localhost:5000/retrieve", {
         method: "POST",
@@ -205,77 +160,108 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ id, data }) => {
         body: JSON.stringify({
           methods: formattedMethods,
           chunks: inputData.chunks,
-          queries: inputData.queries,
+          queries: normalizedQueries,
         }),
       });
 
       if (!response.ok) {
         throw new Error(`Retrieval failed: ${response.statusText}`);
       }
-      // Define types for the API response
-      interface RetrievalMethodResult {
-        baseMethod: string;
-        methodName: string;
-        retrieved: any[];
-        status: "success" | "error";
-        error?: string;
-        vectorstore_status?: string;
-        embeddingModel?: string;
-      }
 
-      interface RetrievalResponse {
-        results: Record<string, RetrievalMethodResult>;
-      }
+      // The response is now a flat array of objects
+      const retrievalResults = await response.json();
 
-      const responseData = (await response.json()) as RetrievalResponse;
+      // Convert to proper LLMResponse objects
+      const llmResponses: LLMResponse[] = retrievalResults.map(
+        (result: any) => ({
+          uid: result.uid || `retrieval-${Date.now()}-${Math.random()}`,
+          prompt: result.prompt,
+          vars: result.vars || {},
+          metavars: result.metavars || {},
+          responses: [result.text],
+          llm: result.llm || "retrieval",
+        }),
+      );
 
-      // Process the results from the response
-      const allResults: Record<string, any> = {};
+      // Set the responses for the inspector
+      setJsonResponses(llmResponses);
 
-      if (responseData.results) {
-        for (const [methodId, result] of Object.entries(responseData.results)) {
-          const method = methodItems.find((m) => m.key === methodId);
-          if (!method) continue;
+      // Group results by method for the node's internal state
+      const resultsByMethod: Record<string, any> = {};
 
-          if (result.status === "success") {
-            allResults[methodId] = {
-              retrieved: result.retrieved || [],
-              metavars: {
-                method: method.methodName,
-                library: method.library,
-                embeddingModel: method.needsEmbeddingModel,
-                vectorstoreStatus: result.vectorstore_status,
-              },
-            };
-          } else {
-            allResults[methodId] = {
-              error: result.error || "Unknown error",
-              retrieved: [],
-            };
-          }
+      // Process each result to organize by method
+      retrievalResults.forEach((result: any) => {
+        const methodId = result.fill_history?.methodId;
+        const methodName = result.metavars?.method;
+
+        if (!resultsByMethod[methodId]) {
+          resultsByMethod[methodId] = {
+            retrieved: {},
+            metavars: {
+              method: methodName,
+              baseMethod: result.metavars?.baseMethod,
+              embeddingModel: result.fill_history?.embeddingModel,
+            },
+          };
         }
-      }
-      console.log(allResults);
-      // Update results
-      setResults(allResults);
-      setJsonResponses(buildLLMResponses(allResults));
+
+        // Group by query
+        const query = result.prompt;
+        if (!resultsByMethod[methodId].retrieved[query]) {
+          resultsByMethod[methodId].retrieved[query] = [];
+        }
+
+        // Add this result to the appropriate query group
+        resultsByMethod[methodId].retrieved[query].push({
+          text: result.text,
+          similarity: result.metavars?.similarity,
+          docTitle: result.metavars?.docTitle,
+          chunkId: result.metavars?.chunkId,
+        });
+      });
+
+      // Update results state
+      setResults(resultsByMethod);
 
       // Prepare output chunks (combined from all methods)
-      const outputChunks = Object.values(allResults)
-        .flatMap((result: any) => (result.retrieved ? result.retrieved : []))
-        .sort((a: any, b: any) => b.similarity - a.similarity)
-        .filter(
-          (chunk: any, index: number, self: any[]) =>
-            index === self.findIndex((c) => c.chunkId === chunk.chunkId),
+      const outputChunks = retrievalResults
+        .sort(
+          (a: any, b: any) =>
+            (b.metavars?.similarity || 0) - (a.metavars?.similarity || 0),
         )
-        .slice(0, 10);
+        .filter(
+          (result: any, index: number, self: any[]) =>
+            index ===
+            self.findIndex(
+              (r: any) => r.metavars?.chunkId === result.metavars?.chunkId,
+            ),
+        )
+        .slice(0, 10)
+        .map((result: any) => ({
+          text: result.text,
+          similarity: result.metavars?.similarity || 0,
+          docTitle: result.metavars?.docTitle || "",
+          chunkId: result.metavars?.chunkId || "",
+          method: result.metavars?.method || "",
+        }));
+
+      const outputForDownstream: TemplateVarInfo[] = retrievalResults.map(
+        (result: any) => ({
+          text: result.text,
+          prompt: result.prompt,
+          fill_history: result.fill_history || {},
+          metavars: result.metavars || {},
+          llm: result.llm,
+          uid: result.uid || `chunk-${Date.now()}-${Math.random()}`,
+        }),
+      );
 
       // Update node data
       setDataPropsForNode(id, {
         query,
         methods: methodItems,
-        results: allResults,
-        output: outputChunks,
+        results: resultsByMethod,
+        output: outputForDownstream,
         vars: templateVars,
       });
 
@@ -296,7 +282,6 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ id, data }) => {
     setDataPropsForNode,
     pingOutputNodes,
     showAlert,
-    buildLLMResponses,
   ]);
 
   // Update stored data when query or methods change

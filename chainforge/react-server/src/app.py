@@ -659,19 +659,16 @@ def handle_bm25(chunk_objs, queries, settings):
     top_k = settings.get("top_k", 5)
     k1 = settings.get("bm25_k1", 1.5)
     b = settings.get("bm25_b", 0.75)
-    
     # Extract text from chunk objects
     chunk_texts = [chunk.get("text", "") for chunk in chunk_objs]
     
     # Preprocess corpus once
     tokenized_corpus = [simple_preprocess(doc) for doc in chunk_texts]
     bm25 = BM25Okapi(tokenized_corpus, k1=k1, b=b)
-    
     results = {}
     for query in queries:
         tokenized_query = simple_preprocess(query)
         raw_scores = bm25.get_scores(tokenized_query)
-        
         # Normalize scores
         max_score = max(raw_scores) if raw_scores.any() and max(raw_scores) > 0 else 1
         normalized_scores = [score / max_score for score in raw_scores]
@@ -1025,40 +1022,60 @@ def retrieve():
                 "library": "BM25",
                 "settings": { "top_k": 5, ... }
             },
-            {
-                "id": "unique_method_id",
-                "baseMethod": "cosine",
-                "methodName": "Cosine similarity",
-                "library": "Cosine",
-                "embeddingProvider": "HuggingFace Transformers",
-                "settings": { "embeddingModel": "all-MiniLM-L6-v2", "top_k": 5, ... }
-            }
             ...
         ],
-        "chunks": [{"text": "...", "docTitle": "...", "chunkId": "..."}, ...],
+        "chunks": [
+            {
+                "text": "chunk text",
+                "prompt": "original query",
+                "fill_history": {"chunkMethod": "method name", "docTitle": "doc1", ...},
+                "metavars": {"docTitle": "doc1", "chunkLibrary": "library", ...},
+                ...
+            },
+            ...
+        ],
         "queries": ["query1", "query2", ...] 
     }
 
     Expected output format:
-    {
-        "results": {
-            "method_id": {
-                "baseMethod": "bm25",
-                "methodName": "BM25",
-                "retrieved": {"query1": [chunk1, chunk2, ...], "query2": [...], ...},
-                "status": "success"
+    A flat array of objects in the ChainForge TemplateVarInfo format:
+    [
+        {
+            "text": "chunk text",
+            "prompt": "query text",
+            "vars": {
+                "query": "query text",
+                "chunkMethod": "chunking method used"
             },
-            ...
-        }
-    }
-    
-    Returns progressive results as each method completes.
+            "metavars": {
+                "method": "retrieval method name",
+                "baseMethod": "retrieval base method",
+                "chunkMethod": "chunking method used",
+                "similarity": 0.85,
+                "docTitle": "document title",
+                "chunkId": "unique id",
+                "rank": 1
+            },
+            "fill_history": {
+                "retrievalMethod": "method name",
+                "baseMethod": "base method type",
+                "methodId": "method id",
+                "embeddingModel": "model name if applicable",
+                "chunkMethod": "chunking method used",
+                "similarity": 0.85,
+                "docTitle": "document title",
+                "chunkId": "unique id"
+            },
+            "llm": "retrieval method name"
+        },
+        ...
+    ]
     """
     data = request.json
     methods = data.get("methods", [])
     chunks = data.get("chunks", [])
     queries = data.get("queries", [])
-    print(methods)
+    
     # Validate inputs
     if not methods:
         return jsonify({"error": "No retrieval methods provided"}), 400
@@ -1067,113 +1084,181 @@ def retrieve():
     if not queries:
         return jsonify({"error": "No queries provided"}), 400
     
+    # Group chunks by chunking method
+    chunks_by_method = {}
+    for chunk in chunks:
+        # Extract chunking method from the chunk
+        chunk_method = chunk.get("fill_history", {}).get("chunkMethod", "unknown")
+        
+        if chunk_method not in chunks_by_method:
+            chunks_by_method[chunk_method] = []
+        
+        # Store the full chunk with all its metadata
+        chunks_by_method[chunk_method].append({
+            "text": chunk.get("text", ""),
+            "docTitle": chunk.get("metavars", {}).get("docTitle", ""),
+            "chunkId": chunk.get("metavars", {}).get("chunkId", ""),
+            "chunkMethod": chunk_method,
+            "chunkLibrary": chunk.get("metavars", {}).get("chunkLibrary", "")
+        })
 
-    # Group methods by embedding model to avoid redundant embedding computation
+    print(len(chunks_by_method))
+    
+    # Group retrieval methods by embedding model to avoid redundant computation
     embedding_methods = {}  # model -> list of methods requiring this model
     keyword_methods = []    # methods not requiring embeddings
 
     for method in methods:
-        try:
-            embedding_provider= method.get("embeddingProvider", None)
-            if embedding_provider:
-                # This is an embedding-based method
-                embedding_model = method.get("settings")["embeddingModel"]
-                full_embedder = f"{embedding_provider}#{embedding_model}"    
-                if full_embedder not in embedding_methods:
-                    embedding_methods[full_embedder] = []
-                embedding_methods[full_embedder].append(method)
-            else:
-                # Non-embedding method
-                keyword_methods.append(method)
-        except Exception as e:
-            results[method_id] = {
-                "baseMethod": base_method,
-                "methodName": method.get("methodName"),
-                "error": str(e),
-                "status": "error"
-            }
-            
+        embedding_provider = method.get("embeddingProvider", None)
+        if embedding_provider:
+            # This is an embedding-based method
+            embedding_model = method.get("settings", {}).get("embeddingModel", "default")
+            full_embedder = f"{embedding_provider}#{embedding_model}"    
+            if full_embedder not in embedding_methods:
+                embedding_methods[full_embedder] = []
+            embedding_methods[full_embedder].append(method)
+        else:
+            # Non-embedding method
+            keyword_methods.append(method)
     
-    # Prepare the response object
-    results = {}
-
-    # Process keyword methods
-    for method in keyword_methods:
-        method_id = method.get("id")
-        base_method = method.get("baseMethod")
-        
-        try:
-            handler = RetrievalMethodRegistry.get_handler(base_method)
-            if not handler:
-                raise ValueError(f"Unknown method: {base_method}")
-            retrieved = handler(chunks, queries, method.get("settings", {}))
-                
-            results[method_id] = {
-                "baseMethod": base_method,
-                "methodName": method.get("methodName"),
-                "retrieved": retrieved,
-                "status": "success"
-            }
-        except Exception as e:
-            # Handle errors
-            results[method_id] = {
-                "baseMethod": base_method,
-                "methodName": method.get("methodName"),
-                "error": str(e),
-                "status": "error"
-            }
-
-    # Process embedding-based methods grouped by model
-    for embedder, methods in embedding_methods.items():
-        try:
-            provider, model_name = embedder.split("#", 1)
-            embedder = EmbeddingModelRegistry.get_embedder(provider)
-            if not embedder:
-                        raise ValueError(f"Unknown embedding model: {model_name}")
+    # Prepare the final flat results array
+    flat_results = []
+    
+    # Process each chunking method separately
+    for chunk_method, chunk_group in chunks_by_method.items():
+        # Skip empty chunk groups
+        if not chunk_group:
+            continue
             
-            # Compute embeddings once for all methods using this model
-            chunk_embeddings = embedder([c["text"] for c in chunks])
-            query_embeddings = embedder(queries)
-        except Exception as e:
-                # Mark all methods using this model as failed
-                for method in methods:
-                    results[method.get("id")] = {
-                        "baseMethod": method.get("baseMethod"),
-                        "methodName": method.get("methodName"),
-                        "error": f"Embedding model error: {str(e)}",
-                        "status": "error"
-                    }
-                continue
-        
-        # Process each method with the same embeddings
-        for method in methods:
+        # Process keyword methods for this chunk group
+        for method in keyword_methods:
             method_id = method.get("id")
             base_method = method.get("baseMethod")
+            method_name = method.get("methodName")
             
             try:
                 handler = RetrievalMethodRegistry.get_handler(base_method)
                 if not handler:
-                    raise ValueError(f"Unknown method: {base_method}")                    
-                retrieved = handler(chunks, chunk_embeddings, queries, query_embeddings, method.get("settings", {}))
-                    
-                results[method_id] = {
-                    "baseMethod": base_method,
-                    "methodName": method.get("methodName"),
-                    "retrieved": retrieved,
-                    "status": "success",
-                    "embeddingModel": model_name
-                }
+                    raise ValueError(f"Unknown method: {base_method}")
+                
+                # Get retrieved chunks for this method and chunk group
+                retrieved = handler(chunk_group, queries, method.get("settings", {}))
+                # Process retrieved chunks for each query
+                for query, chunks in retrieved.items():
+                    for i, chunk in enumerate(chunks):
+                        # Create a ChainForge-compatible response object
+                        response_obj = {
+                            "text": chunk["text"],
+                            "prompt": query,
+                            "vars": {
+                                "query": query,
+                                "chunkMethod": chunk_method,  # Add chunking method to vars for grouping
+                                "similarity": str(chunk["similarity"]),
+                            },
+                            "metavars": {
+                                "method": method_name,
+                                "baseMethod": base_method,
+                                "chunkMethod": chunk_method,  # Include chunking method in metavars
+                                "docTitle": chunk.get("docTitle", ""),
+                                "chunkId": chunk.get("chunkId", ""),
+                                "rank": i + 1
+                            },
+                            "fill_history": {
+                                "retrievalMethod": method_name,
+                                "query": query,
+                                "baseMethod": base_method,
+                                "methodId": method_id,
+                                "chunkMethod": chunk_method,
+                                "similarity": chunk["similarity"],
+                                "docTitle": chunk.get("docTitle", ""),
+                                "chunkId": chunk.get("chunkId", ""),
+                                "chunkLibrary": chunk.get("chunkLibrary", "")
+                            },
+                            "llm": method_name
+                        }
+                        
+                        flat_results.append(response_obj)
             except Exception as e:
-                # Handle errors
-                results[method_id] = {
-                    "baseMethod": base_method,
-                    "methodName": method.get("methodName"),
-                    "error": str(e),
-                    "status": "error",
-                    "embeddingModel": model_name
-                }
+                # Skip errors - we'll just not include results from this method
+                print(f"Error with {method_name} on {chunk_method}: {str(e)}")
+                continue
+
+        # Process embedding-based methods for this chunk group
+        for embedder, methods in embedding_methods.items():
+            try:
+                provider, model_name = embedder.split("#", 1)
+                embedder_func = EmbeddingModelRegistry.get_embedder(provider)
+                if not embedder_func:
+                    raise ValueError(f"Unknown embedding model: {model_name}")
+                
+                # Compute embeddings once for all methods using this model
+                chunk_texts = [c["text"] for c in chunk_group]
+                chunk_embeddings = embedder_func(chunk_texts, model_name)
+                query_embeddings = embedder_func(queries, model_name)
+                
+            except Exception as e:
+                # Skip this embedder if there's an error
+                print(f"Embedding error with {embedder} on {chunk_method}: {str(e)}")
+                continue
+            
+            # Process each method with the same embeddings
+            for method in methods:
+                method_id = method.get("id")
+                base_method = method.get("baseMethod")
+                method_name = method.get("methodName")
+                
+                try:
+                    handler = RetrievalMethodRegistry.get_handler(base_method)
+                    if not handler:
+                        raise ValueError(f"Unknown method: {base_method}")
+                    
+                    # Get retrieved chunks for this method and chunk group
+                    retrieved = handler(chunk_group, chunk_embeddings, queries, query_embeddings, method.get("settings", {}))
+                    
+                    # Process retrieved chunks for each query
+                    for query, chunks in retrieved.items():
+                        for i, chunk in enumerate(chunks):
+                            # Create a ChainForge-compatible response object
+                            response_obj = {
+                                "text": chunk["text"],
+                                "prompt": query,
+                                "vars": {
+                                    "query": query,
+                                    "chunkMethod": chunk_method,  # Add chunking method to vars for grouping
+                                    "similarity": str(chunk["similarity"]),
+                                },
+                                "metavars": {
+                                    "method": method_name,
+                                    "baseMethod": base_method,
+                                    "chunkMethod": chunk_method,
+                                    "embeddingModel": model_name,
+                                    "docTitle": chunk.get("docTitle", ""),
+                                    "chunkId": chunk.get("chunkId", ""),
+                                    "rank": i + 1
+                                },
+                                "fill_history": {
+                                    "retrievalMethod": method_name,
+                                    "query": query,
+                                    "baseMethod": base_method,
+                                    "methodId": method_id,
+                                    "embeddingModel": model_name,
+                                    "chunkMethod": chunk_method,
+                                    "similarity": chunk["similarity"],
+                                    "docTitle": chunk.get("docTitle", ""),
+                                    "chunkId": chunk.get("chunkId", ""),
+                                    "chunkLibrary": chunk.get("chunkLibrary", "")
+                                },
+                                "llm": method_name
+                            }
+                            
+                            flat_results.append(response_obj)
+                            
+                except Exception as e:
+                    # Skip errors - we'll just not include results from this method
+                    print(f"Error with {method_name} on {chunk_method}: {str(e)}")
+                    continue
     
-    return jsonify({"results": results}), 200
+    return jsonify(flat_results), 200
 
 if __name__ == "__main__":
     app.run(debug=True)
