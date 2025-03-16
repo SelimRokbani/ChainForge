@@ -1007,6 +1007,90 @@ def handle_clustered(chunk_objs, chunk_embeddings, queries, query_embeddings, se
             results[query] = retrieved
     return results
 
+import faiss
+import numpy as np
+import os
+from langchain_community.vectorstores import FAISS
+
+@RetrievalMethodRegistry.register("faiss")
+def handle_faiss(chunk_objs, chunk_embeddings, queries, query_embeddings, settings):
+    """
+    Retrieve chunks using LangChain FAISS for fast similarity search.
+    
+    Uses pre-computed embeddings instead of creating new ones.
+    Supports both creating a new FAISS index and loading an existing one.
+    """
+    top_k = settings.get("top_k", 5)
+    similarity_threshold = settings.get("similarity_threshold", 0)
+    faiss_mode = settings.get("faissMode", "create")  # "create" or "load"
+    faiss_path = settings.get("faissPath", "")  # Path to FAISS index
+
+    # Convert embeddings to numpy arrays if they aren't already
+    chunk_embeddings = np.array(chunk_embeddings).astype('float32')
+    query_embeddings = np.array(query_embeddings).astype('float32')
+
+    # Step 1: Initialize LangChain FAISS Vector Store
+    if faiss_mode == "load":
+        if not os.path.exists(faiss_path):
+            print(f"Error: FAISS index not found at {faiss_path}")
+            return {}
+
+        try:
+            # For loading, we need an embedding function, but it won't be used for retrieval
+            # Using a dummy embedding function since we already have embeddings
+            dummy_embeddings = lambda x: chunk_embeddings
+            vector_store = FAISS.load_local(faiss_path, dummy_embeddings, allow_dangerous_deserialization=True)
+        except Exception as e:
+            print(f"Error loading FAISS index: {e}")
+            return {}
+    elif faiss_mode == "create":
+        # Creating a new FAISS index with pre-computed embeddings
+        texts = [chunk["text"] for chunk in chunk_objs]
+        metadatas = [{"docTitle": chunk.get("docTitle", ""), "chunkId": chunk.get("chunkId", "")} for chunk in chunk_objs]
+
+        # Create FAISS index directly from pre-computed embeddings
+        vector_store = FAISS.from_embeddings(
+            text_embeddings=zip(texts, chunk_embeddings),
+            embedding=None,  # No embedding model needed since we have embeddings
+            metadatas=metadatas
+        )
+
+        # Save the FAISS index if mode is "create" and path is provided
+        if faiss_mode == "create" and faiss_path:
+            vector_store.save_local(faiss_path)
+
+    # Step 2: Perform FAISS Retrieval using pre-computed query embeddings
+    results = {}
+
+    for query, q_embedding in zip(queries, query_embeddings):
+        # Reshape query embedding to 2D array as required by FAISS
+        q_embedding = q_embedding.reshape(1, -1)
+        
+        # Perform similarity search with pre-computed embedding
+        search_results = vector_store.similarity_search_with_score_by_vector(
+            embedding=q_embedding[0],  # Pass single embedding vector
+            k=top_k
+        )
+
+        # Step 3: Convert results into structured format
+        retrieved = []
+        for doc, score in search_results:
+            similarity_score = float(score)  # Ensure it's a standard float
+
+            # Apply similarity threshold
+            if similarity_score >= similarity_threshold:
+                retrieved.append({
+                    "text": doc.page_content,
+                    "similarity": similarity_score,
+                    "docTitle": doc.metadata.get("docTitle", ""),
+                    "chunkId": doc.metadata.get("chunkId", ""),
+                })
+
+        results[query] = retrieved
+
+    return results
+
+
 @app.route("/retrieve", methods=["POST"])
 def retrieve():
     """
@@ -1138,6 +1222,7 @@ def retrieve():
             
             try:
                 handler = RetrievalMethodRegistry.get_handler(base_method)
+                print(handler)
                 if not handler:
                     raise ValueError(f"Unknown method: {base_method}")
                 
@@ -1261,4 +1346,4 @@ def retrieve():
     return jsonify(flat_results), 200
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True, port=5001)
