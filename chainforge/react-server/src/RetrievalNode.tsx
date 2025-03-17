@@ -143,7 +143,7 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ id, data }) => {
                   (item: any) =>
                     `[Score: ${item.similarity?.toFixed(4) || "N/A"}] ${item.text || item.content || JSON.stringify(item)}`,
                 ),
-                llm: methodKey,
+                llm: result.metavars.method,
               });
             },
           );

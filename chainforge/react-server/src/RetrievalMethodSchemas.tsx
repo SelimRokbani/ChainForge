@@ -530,6 +530,82 @@ export const FAISSSchema: ModelSettingsDict = {
   postprocessors: {},
 };
 
+/**
+ * Pinecone Vectorstore
+ */
+export const PineconeSchema: ModelSettingsDict = {
+  fullName: "Pinecone Vectorstore",
+  description: "Persistent vector storage using Pinecone",
+  schema: {
+    type: "object",
+    required: ["top_k", "similarity_threshold", "pineconeMode", "pineconeIndex", "pineconeApiKey", "pineconeEnvironment"],
+    properties: {
+      top_k: {
+        type: "number",
+        default: 5,
+        title: "Top K Results",
+      },
+      similarity_threshold: {
+        type: "number",
+        default: 0.05,
+        title: "Similarity Threshold",
+      },
+      pineconeMode: {
+        type: "string",
+        default: "create",
+        title: "Pinecone Mode",
+        enum: ["create", "load"],
+      },
+      pineconeIndex: {
+        type: "string",
+        default: "default-index",
+        title: "Pinecone Index Name",
+      },
+      pineconeApiKey: {
+        type: "string",
+        default: "",
+        title: "Pinecone API Key",
+      },
+      pineconeEnvironment: {
+        type: "string",
+        default: "us-east-1",
+        title: "Pinecone Environment",
+      },
+    },
+  },
+  uiSchema: {
+    top_k: {
+      "ui:widget": "range",
+      "ui:options": {
+        min: 1,  
+        max: 20,
+        step: 1,
+      },
+    },
+    similarity_threshold: {
+      "ui:widget": "range",
+      "ui:options": {
+        min: 0,
+        max: 1,
+        step: 0.05,
+      },
+    },
+    pineconeMode: {
+      "ui:widget": "select",
+    },
+    pineconeIndex: {
+      "ui:widget": "text",
+    },
+    pineconeApiKey: {
+      "ui:widget": "password",
+    },
+    pineconeEnvironment: {
+      "ui:widget": "text",
+    },
+  },
+  postprocessors: {},
+};
+
 // Combined schema object for all retrieval methods
 export const RetrievalMethodSchemas: {
   [baseMethod: string]: ModelSettingsDict;
@@ -543,6 +619,7 @@ export const RetrievalMethodSchemas: {
   euclidean: EuclideanDistanceSchema,
   clustered: ClusteredEmbeddingSchema,
   faiss: FAISSSchema,
+  pinecone: PineconeSchema
 };
 
 // Method groupings for the menu
@@ -629,6 +706,14 @@ export const retrievalMethodGroups = [
         methodName: "FAISS Vectorstore",
         library: "FAISS",
         emoji: "💾",
+        group: "Vectorstores",
+        needsEmbeddingModel: true,
+      },
+      {
+        baseMethod: "pinecone",
+        methodName: "Pinecone Vectorstore",
+        library: "Pinecone",
+        emoji: "🌲",
         group: "Vectorstores",
         needsEmbeddingModel: true,
       },
