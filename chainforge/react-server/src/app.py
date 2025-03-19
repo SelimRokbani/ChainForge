@@ -1024,11 +1024,12 @@ def handle_faiss(chunk_objs, chunk_embeddings, queries, query_embeddings, settin
     Supports both creating a new FAISS index and loading an existing one.
     """
     top_k = settings.get("top_k", 5)
-    similarity_threshold = settings.get("similarity_threshold", 0)
+    similarity_threshold = settings.get("similarity_threshold", 0) / 100
     faiss_mode = settings.get("faissMode", "create")  # "create" or "load"
     faiss_path = settings.get("faissPath", "")  # Path to FAISS index
+    faiss_metric = settings.get("metric", "l2")  # "l2" (default) or "ip"
 
-    # Convert embeddings to numpy arrays if they aren't already
+    # Convert embeddings to numpy arrays
     chunk_embeddings = np.array(chunk_embeddings).astype('float32')
     query_embeddings = np.array(query_embeddings).astype('float32')
 
@@ -1039,33 +1040,46 @@ def handle_faiss(chunk_objs, chunk_embeddings, queries, query_embeddings, settin
             return {}
 
         try:
-            # For loading, we need an embedding function, but it won't be used for retrieval
-            # Using a dummy embedding function since we already have embeddings
+            # Dummy embedding function for loading
             dummy_embeddings = lambda x: chunk_embeddings
             vector_store = FAISS.load_local(faiss_path, dummy_embeddings, allow_dangerous_deserialization=True)
+
+            # Detect the metric type from the loaded index
+            metric_type = vector_store.index.metric_type
+            faiss_metric = "l2" if metric_type == faiss.METRIC_L2 else "ip"
+            print(f"Loaded FAISS index with metric: {faiss_metric}")
+
         except Exception as e:
             print(f"Error loading FAISS index: {e}")
             return {}
+    
     elif faiss_mode == "create":
-        # Creating a new FAISS index with pre-computed embeddings
+        # Normalize embeddings if using Inner Product (IP) for cosine similarity
+        if faiss_metric == "ip":
+            faiss.normalize_L2(chunk_embeddings)
+
+        # Create FAISS index
         texts = [chunk["text"] for chunk in chunk_objs]
         metadatas = [{"docTitle": chunk.get("docTitle", ""), "chunkId": chunk.get("chunkId", "")} for chunk in chunk_objs]
 
-        # Create FAISS index directly from pre-computed embeddings
         vector_store = FAISS.from_embeddings(
             text_embeddings=zip(texts, chunk_embeddings),
             embedding=None,  # No embedding model needed since we have embeddings
             metadatas=metadatas
         )
 
-        # Save the FAISS index if mode is "create" and path is provided
-        if faiss_mode == "create" and faiss_path:
+        # Save the FAISS index if path is provided
+        if faiss_path:
             vector_store.save_local(faiss_path)
 
     # Step 2: Perform FAISS Retrieval using pre-computed query embeddings
     results = {}
 
     for query, q_embedding in zip(queries, query_embeddings):
+        # Normalize query embeddings if using Inner Product (IP)
+        if faiss_metric == "ip":
+            faiss.normalize_L2(q_embedding)
+
         # Reshape query embedding to 2D array as required by FAISS
         q_embedding = q_embedding.reshape(1, -1)
         
@@ -1078,7 +1092,11 @@ def handle_faiss(chunk_objs, chunk_embeddings, queries, query_embeddings, settin
         # Step 3: Convert results into structured format
         retrieved = []
         for doc, score in search_results:
-            similarity_score = float(score)  # Ensure it's a standard float
+            # Convert score based on FAISS metric
+            if faiss_metric == "l2":
+                similarity_score = 1 / (1 + float(score))  # Convert L2 distance to similarity
+            else:  # "ip"
+                similarity_score = float(score)  # Direct cosine similarity if normalized
 
             # Apply similarity threshold
             if similarity_score >= similarity_threshold:

@@ -38,7 +38,7 @@ export const embeddingProviders = [
       "all-MiniLM-L6-v2",
       "all-mpnet-base-v2",
       "paraphrase-MiniLM-L3-v2",
-      "all-distilroberta-v1"
+      "all-distilroberta-v1",
     ],
   },
 ];
@@ -475,10 +475,242 @@ export const ClusteredEmbeddingSchema: ModelSettingsDict = {
  */
 export const FAISSSchema: ModelSettingsDict = {
   fullName: "FAISS Vectorstore",
-  description: "Persistent vector storage using FAISS",
+  description: "Persistent vector storage using FAISS for efficient similarity search.",
   schema: {
     type: "object",
-    required: ["top_k", "similarity_threshold", "faissMode", "faissPath"],
+    required: ["top_k", "similarity_threshold", "faissMode", "faissPath", "metric"],
+    properties: {
+      top_k: {
+        type: "number",
+        default: 5,
+        title: "Top K Results",
+        description: "The number of top matching results to retrieve from the FAISS index.",
+      },
+      similarity_threshold: {
+        type: "number",
+        default: 50,
+        title: "Similarity Threshold (%)",
+        minimum: 0,
+        maximum: 100,
+        step: 1,
+        description: "Minimum similarity percentage (0-100) required for a result to be considered relevant.",
+      },
+      faissMode: {
+        type: "string",
+        default: "create",
+        title: "FAISS Mode",
+        enum: ["create", "load"],
+        description: "Select whether to create a new FAISS index or load an existing one.",
+      },
+      faissPath: {
+        type: "string",
+        default: "",
+        title: "FAISS Index Path",
+        description: "The file path where the FAISS index will be saved or loaded from.",
+      },
+      metric: {
+        type: "string",
+        default: "l2",
+        title: "FAISS Distance Metric",
+        enum: ["l2", "ip"],
+        description: "Select the similarity measure used in FAISS: L2 (Euclidean Distance) or IP (Inner Product).",
+      },
+    },
+  },
+  uiSchema: {
+    top_k: {
+      "ui:widget": "range",
+      "ui:options": {
+        min: 1,
+        max: 20,
+        step: 1,
+      },
+    },
+    similarity_threshold: {
+      "ui:widget": "range",
+      "ui:options": {
+        min: 0,
+        max: 100,
+        step: 1,
+      },
+    },    
+    faissMode: {
+      "ui:widget": "select",
+      "ui:options": {
+        enumOptions: [
+          { label: "Create a new FAISS index", value: "create" },
+          { label: "Load an existing FAISS index", value: "load" }
+        ],
+      },
+    },
+    faissPath: {
+      "ui:widget": "text",
+      "ui:options": {
+        placeholder: "Enter the path to the FAISS index file",
+      },
+    },
+    metric: {
+      "ui:widget": "select",
+      "ui:options": {
+        enumOptions: [
+          { label: "L2 (Euclidean Distance)", value: "l2" },
+          { label: "IP (Inner Product / Cosine Similarity)", value: "ip" }
+        ],
+      },
+    },
+  },
+  postprocessors: {},
+};
+
+
+/**
+ * Pinecone Vectorstore
+ */
+export const PineconeSchema: ModelSettingsDict = {
+  fullName: "Pinecone Vectorstore",
+  description: "Persistent vector storage using Pinecone for scalable and efficient similarity search.",
+  schema: {
+    type: "object",
+    required: [
+      "top_k",
+      "similarity_threshold",
+      "pineconeMode",
+      "pineconeIndex",
+      "pineconeApiKey",
+      "pineconeEnvironment",
+      "metric"
+    ],
+    properties: {
+      top_k: {
+        type: "number",
+        default: 5,
+        title: "Top K Results",
+        description: "Number of top similar results to retrieve from Pinecone.",
+      },
+      similarity_threshold: {
+        type: "number",
+        default: 50,
+        title: "Similarity Threshold (%)",
+        minimum: 0,
+        maximum: 100,
+        step: 1,
+        description: "Minimum similarity percentage (0-100) required for a result to be considered relevant.",
+      },
+      pineconeMode: {
+        type: "string",
+        default: "create",
+        title: "Pinecone Mode",
+        enum: ["create", "load", "use"],
+        description: "Select whether to create a new Pinecone index, load an existing one, or just use it.",
+      },
+      pineconeIndex: {
+        type: "string",
+        default: "default-index",
+        title: "Pinecone Index Name",
+        description: "The name of the Pinecone index where vectors are stored.",
+      },
+      pineconeApiKey: {
+        type: "string",
+        default: "",
+        title: "Pinecone API Key",
+        description: "Your Pinecone API Key to access the vector database.",
+      },
+      pineconeEnvironment: {
+        type: "string",
+        default: "us-east-1",
+        title: "Pinecone Environment",
+        description: "The Pinecone region where your index is hosted (e.g., 'us-west1-gcp').",
+      },
+      metric: {
+        type: "string",
+        default: "cosine",
+        title: "Distance Metric",
+        enum: ["cosine", "euclidean", "dotproduct"],
+        description: "Select the similarity measure used for retrieval: Cosine, Euclidean, or Dot Product.",
+      },
+      namespace: {
+        type: "string",
+        default: "",
+        title: "Namespace",
+        description: "Optional: Use namespaces to separate different sets of vectors in the same index.",
+      },
+    },
+  },
+  uiSchema: {
+    top_k: {
+      "ui:widget": "range",
+      "ui:options": {
+        min: 1,
+        max: 20,
+        step: 1,
+      },
+    },
+    similarity_threshold: {
+      "ui:widget": "range",
+      "ui:options": {
+        min: 0,
+        max: 100,
+        step: 1,
+      },
+    },
+    pineconeMode: {
+      "ui:widget": "select",
+      "ui:options": {
+        enumOptions: [
+          { label: "Create a new Pinecone index", value: "create" },
+          { label: "Load an existing Pinecone index", value: "load" },
+          { label: "Use an existing Pinecone index", value: "use" }
+        ],
+      },
+    },
+    pineconeIndex: {
+      "ui:widget": "text",
+      "ui:options": {
+        placeholder: "Enter the Pinecone index name",
+      },
+    },
+    pineconeApiKey: {
+      "ui:widget": "password",
+      "ui:options": {
+        placeholder: "Enter your Pinecone API Key",
+      },
+    },
+    pineconeEnvironment: {
+      "ui:widget": "text",
+      "ui:options": {
+        placeholder: "Enter Pinecone region (e.g., us-west1-gcp)",
+      },
+    },
+    metric: {
+      "ui:widget": "select",
+      "ui:options": {
+        enumOptions: [
+          { label: "Cosine Similarity", value: "cosine" },
+          { label: "Euclidean Distance", value: "euclidean" },
+          { label: "Dot Product", value: "dotproduct" }
+        ],
+      },
+    },
+    namespace: {
+      "ui:widget": "text",
+      "ui:options": {
+        placeholder: "Optional: Specify a namespace (leave empty if not needed)",
+      },
+    },
+  },
+  postprocessors: {},
+};
+
+
+/**
+ * ChromaDB Vectorstore
+ */
+export const ChromaDBSchema: ModelSettingsDict = {
+  fullName: "ChromaDB Vectorstore",
+  description: "Persistent or in-memory vector storage using ChromaDB",
+  schema: {
+    type: "object",
+    required: ["top_k", "similarity_threshold", "chromaMode"],
     properties: {
       top_k: {
         type: "number",
@@ -487,19 +719,24 @@ export const FAISSSchema: ModelSettingsDict = {
       },
       similarity_threshold: {
         type: "number",
-        default: 0.7,
+        default: 0.05,
         title: "Similarity Threshold",
       },
-      faissMode: {
+      chromaMode: {
         type: "string",
-        default: "create",
-        title: "FAISS Mode",
-        enum: ["create", "load"],
+        default: "memory",
+        title: "ChromaDB Mode",
+        enum: ["memory", "persistent"],
       },
-      faissPath: {
+      chromaPersistDir: {
         type: "string",
         default: "",
-        title: "FAISS Index Path",
+        title: "Persistence Directory (if persistent mode)",
+      },
+      chromaCollection: {
+        type: "string",
+        default: "default_collection",
+        title: "Collection Name",
       },
     },
   },
@@ -520,86 +757,13 @@ export const FAISSSchema: ModelSettingsDict = {
         step: 0.05,
       },
     },
-    faissMode: {
+    chromaMode: {
       "ui:widget": "select",
     },
-    faissPath: {
+    chromaPersistDir: {
       "ui:widget": "text",
     },
-  },
-  postprocessors: {},
-};
-
-/**
- * Pinecone Vectorstore
- */
-export const PineconeSchema: ModelSettingsDict = {
-  fullName: "Pinecone Vectorstore",
-  description: "Persistent vector storage using Pinecone",
-  schema: {
-    type: "object",
-    required: ["top_k", "similarity_threshold", "pineconeMode", "pineconeIndex", "pineconeApiKey", "pineconeEnvironment"],
-    properties: {
-      top_k: {
-        type: "number",
-        default: 5,
-        title: "Top K Results",
-      },
-      similarity_threshold: {
-        type: "number",
-        default: 0.05,
-        title: "Similarity Threshold",
-      },
-      pineconeMode: {
-        type: "string",
-        default: "create",
-        title: "Pinecone Mode",
-        enum: ["create", "load"],
-      },
-      pineconeIndex: {
-        type: "string",
-        default: "default-index",
-        title: "Pinecone Index Name",
-      },
-      pineconeApiKey: {
-        type: "string",
-        default: "",
-        title: "Pinecone API Key",
-      },
-      pineconeEnvironment: {
-        type: "string",
-        default: "us-east-1",
-        title: "Pinecone Environment",
-      },
-    },
-  },
-  uiSchema: {
-    top_k: {
-      "ui:widget": "range",
-      "ui:options": {
-        min: 1,  
-        max: 20,
-        step: 1,
-      },
-    },
-    similarity_threshold: {
-      "ui:widget": "range",
-      "ui:options": {
-        min: 0,
-        max: 1,
-        step: 0.05,
-      },
-    },
-    pineconeMode: {
-      "ui:widget": "select",
-    },
-    pineconeIndex: {
-      "ui:widget": "text",
-    },
-    pineconeApiKey: {
-      "ui:widget": "password",
-    },
-    pineconeEnvironment: {
+    chromaCollection: {
       "ui:widget": "text",
     },
   },
@@ -619,7 +783,8 @@ export const RetrievalMethodSchemas: {
   euclidean: EuclideanDistanceSchema,
   clustered: ClusteredEmbeddingSchema,
   faiss: FAISSSchema,
-  pinecone: PineconeSchema
+  pinecone: PineconeSchema,
+  chromadb: ChromaDBSchema,
 };
 
 // Method groupings for the menu
@@ -714,6 +879,14 @@ export const retrievalMethodGroups = [
         methodName: "Pinecone Vectorstore",
         library: "Pinecone",
         emoji: "🌲",
+        group: "Vectorstores",
+        needsEmbeddingModel: true,
+      },
+      {
+        baseMethod: "chromadb",
+        methodName: "ChromaDB Vectorstore",
+        library: "ChromaDB",
+        emoji: "🧠",
         group: "Vectorstores",
         needsEmbeddingModel: true,
       },
