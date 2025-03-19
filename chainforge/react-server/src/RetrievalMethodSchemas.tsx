@@ -703,7 +703,8 @@ export const PineconeSchema: ModelSettingsDict = {
 
 
 /**
- * ChromaDB Vectorstore
+ * ChromaDB Vectorstore Configuration Schema
+ *
  */
 export const ChromaDBSchema: ModelSettingsDict = {
   fullName: "ChromaDB Vectorstore",
@@ -716,27 +717,39 @@ export const ChromaDBSchema: ModelSettingsDict = {
         type: "number",
         default: 5,
         title: "Top K Results",
+        description: "The number of closest matches to retrieve during a query.",
       },
       similarity_threshold: {
         type: "number",
-        default: 0.05,
-        title: "Similarity Threshold",
+        default: 50,
+        title: "Similarity Threshold (%)",
+        description: "Minimum similarity score (0-100) required for a match to be considered relevant.",
       },
       chromaMode: {
         type: "string",
         default: "memory",
         title: "ChromaDB Mode",
         enum: ["memory", "persistent"],
+        description: "Defines whether ChromaDB operates in memory mode (non-persistent) or **persistent mode (data is saved).",
       },
       chromaPersistDir: {
         type: "string",
         default: "",
         title: "Persistence Directory (if persistent mode)",
+        description: "Directory path where ChromaDB will store vectors when using persistent mode.",
       },
       chromaCollection: {
         type: "string",
         default: "default_collection",
         title: "Collection Name",
+        description: "Name of the ChromaDB collection where vectors will be stored and retrieved.",
+      },
+      metric: {
+        type: "string",
+        default: "cosine",
+        title: "Distance Metric",
+        enum: ["cosine", "l2", "ip"],
+        description: "Select the similarity measure used for retrieval:\n- Cosine Similarity: Measures the angle between vectors.\n- Euclidean Distance (L2): Measures absolute distance.\n- Dot Product (IP): Measures vector projection.",
       },
     },
   },
@@ -753,8 +766,8 @@ export const ChromaDBSchema: ModelSettingsDict = {
       "ui:widget": "range",
       "ui:options": {
         min: 0,
-        max: 1,
-        step: 0.05,
+        max: 100,
+        step: 1,
       },
     },
     chromaMode: {
@@ -766,9 +779,20 @@ export const ChromaDBSchema: ModelSettingsDict = {
     chromaCollection: {
       "ui:widget": "text",
     },
+    metric: {
+      "ui:widget": "select",
+      "ui:options": {
+        enumOptions: [
+          { label: "Cosine Similarity", value: "cosine" },
+          { label: "Euclidean Distance", value: "l2" },
+          { label: "Dot Product", value: "ip" }
+        ],
+      },
+    },
   },
   postprocessors: {},
 };
+
 
 // Combined schema object for all retrieval methods
 export const RetrievalMethodSchemas: {

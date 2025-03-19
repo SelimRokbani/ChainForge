@@ -1125,7 +1125,7 @@ def handle_pinecone(chunk_objs, chunk_embeddings, queries, query_embeddings, set
 
     # 1. Extract settings
     top_k = settings.get("top_k", 5)
-    similarity_threshold = settings.get("similarity_threshold", 0.5)
+    similarity_threshold = settings.get("similarity_threshold", 0) / 100
     pinecone_api_key = settings.get("pineconeApiKey", "")
     pinecone_env = settings.get("pineconeEnvironment", "us-east-1")
     pinecone_index_name = settings.get("pineconeIndex", "")
@@ -1148,136 +1148,192 @@ def handle_pinecone(chunk_objs, chunk_embeddings, queries, query_embeddings, set
         print("[ERROR] Missing Pinecone API key or index name. Aborting.")
         return {q: [] for q in queries}
 
-    # 2. Initialize Pinecone via Pinecone(...) constructor
+    # 2. Initialize Pinecone
     print("[DEBUG] Initializing Pinecone client...")
     pc = Pinecone(api_key=pinecone_api_key)
 
     # 3. Check whether index exists
-    print("[DEBUG] Listing existing Pinecone indexes (list of dicts)...")
-    existing_indexes_info = pc.list_indexes()  # returns a list of dicts
-    print(f"[DEBUG] Existing indexes info: {existing_indexes_info}")
-
-    # Extract just the names
+    print("[DEBUG] Checking existing Pinecone indexes...")
+    existing_indexes_info = pc.list_indexes()
     existing_index_names = [idx["name"] for idx in existing_indexes_info]
-    print(f"[DEBUG] Extracted index names: {existing_index_names}")
-
+    
     index_exists = pinecone_index_name in existing_index_names
 
-    # Determine dimension from chunk_embeddings (fallback if none)
-    if chunk_embeddings and len(chunk_embeddings) > 0:
-        print(f"[len of chunk]{len(chunk_embeddings[0])}")
-        dimension = len(chunk_embeddings[0])
-    else:
-        dimension = 768  # fallback
-    print(f"[DEBUG] Determined embedding dimension: {dimension}")
+    # Determine embedding dimension
+    dimension = len(chunk_embeddings[0]) if chunk_embeddings else 768  # Fallback
 
-    # Decide: CREATE or LOAD/USE
+    # Create or load the index
+    if pinecone_mode == "create" and not index_exists:
+        print(f"[DEBUG] Creating Pinecone index '{pinecone_index_name}'...")
+        try:
+            pc.create_index(
+                name=pinecone_index_name,
+                dimension=dimension,
+                metric=similarity_function,
+                spec=ServerlessSpec(cloud="aws", region=pinecone_env)
+            )
+            print(f"[DEBUG] Index '{pinecone_index_name}' created successfully.")
+        except Exception as e:
+            print(f"[ERROR] Failed to create index: {e}")
+            return {q: [] for q in queries}
+
+    elif pinecone_mode in ("load", "use") and not index_exists:
+        print(f"[ERROR] Index '{pinecone_index_name}' does not exist. Aborting.")
+        return {q: [] for q in queries}
+
+    # Connect to the index
+    print("[DEBUG] Connecting to the Pinecone index...")
+    index = pc.Index(name=pinecone_index_name)
+
+    # Supposons que chunk_embeddings soit une liste de listes (ou np.array) de shape (num_chunks, embedding_dim)
+    print("[DEBUG] Première dimension de chunk_embeddings :", len(chunk_embeddings[0]))
+    # Même chose pour les queries
+    print("[DEBUG] Première dimension de query_embeddings :", len(query_embeddings[0]))
+
+
+    # Upsert embeddings if in "create" mode
     if pinecone_mode == "create":
-        print("[DEBUG] User selected 'create' mode.")
-        if not index_exists:
-            print(f"[DEBUG] Index '{pinecone_index_name}' does NOT exist. Creating now...")
-            try:
-                pc.create_index(
-                    name=pinecone_index_name,
-                    dimension=dimension,
-                    metric=similarity_function,
-                    spec=ServerlessSpec(cloud="aws", region=pinecone_env)
-                )
-                print(f"[DEBUG] Index '{pinecone_index_name}' created successfully.")
-            except Exception as e:
-                print(f"[ERROR] Failed to create index: {e}")
-                return {q: [] for q in queries}
-        else:
-            print(f"[DEBUG] Index '{pinecone_index_name}' already exists. Will use existing index.")
-
-        print("[DEBUG] Connecting to the Pinecone index...")
-        index = pc.Index(name=pinecone_index_name)
-
-        # 4. Upsert chunk embeddings (only in create mode)
         print("[DEBUG] Preparing vectors to upsert...")
         vectors_to_upsert = []
         for chunk, embedding in zip(chunk_objs, chunk_embeddings):
-            # Safely get chunkId; if empty or None, fallback to a UUID
-            vector_id = chunk.get("chunkId", None)
-            if not vector_id or not vector_id.strip():
-                vector_id = str(uuid.uuid4())
-            
+            vector_id = chunk.get("chunkId", str(uuid.uuid4()))
             metadata = {
                 "text": chunk.get("text", ""),
                 "docTitle": chunk.get("docTitle", ""),
-                "chunkId": vector_id,  # record the final ID
+                "chunkId": vector_id,
             }
             vectors_to_upsert.append((vector_id, embedding, metadata))
 
         if vectors_to_upsert:
-            print(f"[DEBUG] Upserting {len(vectors_to_upsert)} vectors into Pinecone...")
             try:
+                print(f"[DEBUG] Upserting {len(vectors_to_upsert)} vectors into Pinecone...")
                 index.upsert(vectors=vectors_to_upsert, namespace=pinecone_namespace)
                 print("[DEBUG] Upsert completed successfully.")
             except Exception as e:
                 print(f"[ERROR] Failed to upsert vectors: {e}")
                 return {q: [] for q in queries}
-        else:
-            print("[DEBUG] No vectors to upsert (vectors_to_upsert is empty).")
-
-    elif pinecone_mode in ("load", "use"):
-        print(f"[DEBUG] User selected '{pinecone_mode}' mode.")
-        if not index_exists:
-            print(f"[ERROR] Index '{pinecone_index_name}' does not exist. Aborting.")
-            return {q: [] for q in queries}
-        print("[DEBUG] Connecting to the existing Pinecone index...")
-        index = pc.Index(name=pinecone_index_name)
-
-        # Typically skip upsert in load/use mode
-        print(f"[DEBUG] Skipping upsert because mode is '{pinecone_mode}'.")
-
-    else:
-        print(f"[ERROR] Unrecognized pineconeMode '{pinecone_mode}'. Must be 'create', 'load', or 'use'.")
-        return {q: [] for q in queries}
 
     # 5. Query / Retrieval
-    print("[DEBUG] Starting retrieval process...")
+    print("[DEBUG] Starting retrieval for queries...")
     results = {}
-    for i, (query_text, query_emb) in enumerate(zip(queries, query_embeddings)):
-        print(f"[DEBUG] Query #{i+1} => '{query_text}'")
-        q_emb_list = list(query_emb)  # ensure it's a plain list
-
+    for query, query_emb in zip(queries, query_embeddings):
+        print(f"[DEBUG] Processing query: '{query}'")
         try:
+            # Convert embedding to list if necessary (Pinecone expects a list of floats)
+            q_emb_list = list(query_emb)
+            
+            # Query the index
             pinecone_response = index.query(
+                namespace=pinecone_namespace,
                 vector=q_emb_list,
                 top_k=top_k,
-                namespace=pinecone_namespace,
                 include_metadata=True
             )
-        except Exception as e:
-            print(f"[ERROR] Pinecone query failed: {e}")
-            results[query_text] = []
-            continue
-
-        # 6. Convert matches into the desired format
-        print(f"[DEBUG] Pinecone returned {len(pinecone_response.matches)} matches.")
-        retrieved = []
-        for match_idx, match in enumerate(pinecone_response.matches):
-            sim_score = float(match.score)
-            md = match.metadata or {}
+            print("AAA")
+            print(pinecone_response)
             
-            # If metric is "cosine" or "dotproduct", match.score is similarity.
-            # If metric is "euclidean", it's a distance. Adjust if needed.
-            if sim_score >= similarity_threshold:
-                retrieved.append({
-                    "text": md.get("text", ""),
-                    "similarity": sim_score,
-                    "docTitle": md.get("docTitle", ""),
-                    "chunkId": md.get("chunkId", ""),
-                })
-            else:
-                print(f"[DEBUG] Match #{match_idx+1} below threshold ({sim_score} < {similarity_threshold}), skipping.")
+            # Process matches
+            retrieved_chunks = []
+            for match_idx, match in enumerate(pinecone_response.get("matches", [])):
+                sim_score = match["score"]
+                if sim_score >= similarity_threshold:
+                    md = match.get("metadata", {}) or {}
+                    chunk_info = {
+                        "text": md.get("text", ""),
+                        "docTitle": md.get("docTitle", ""),
+                        "chunkId": md.get("chunkId", ""),
+                        "similarity": sim_score
+                    }
+                    retrieved_chunks.append(chunk_info)
+                else:
+                    print(f"[DEBUG] Match #{match_idx+1} below threshold ({sim_score} < {similarity_threshold}), skipping.")
+            
+            results[query] = retrieved_chunks
+            print(f"[DEBUG] Retrieved {len(retrieved_chunks)} chunks for query: '{query}'")
+        except Exception as e:
+            print(f"[ERROR] Failed to process query '{query}': {e}")
+            results[query] = []
 
-        results[query_text] = retrieved
-        print(f"[DEBUG] Retrieved {len(retrieved)} chunks above threshold for query '{query_text}'.")
-
-    print("[DEBUG] Retrieval completed. Returning results.")
+    print("[DEBUG] Retrieval completed.")
     return results
+
+import chromadb
+import numpy as np
+
+def handle_chroma(chunk_objs, chunk_embeddings, queries, query_embeddings, settings):
+    """
+    Retrieve chunks using Chroma DB Vector Store.
+
+    Args:
+        chunk_objs (list): List of dicts with chunk data (e.g., {"text": str, "chunkId": str, "docTitle": str}).
+        chunk_embeddings (list): List of embeddings for chunks (NumPy arrays or lists).
+        queries (list): List of query strings.
+        query_embeddings (list): List of embeddings for queries (NumPy arrays or lists).
+        settings (dict): Configuration settings (e.g., collection_name, metric, chroma_mode).
+
+    Returns:
+        dict: Mapping of query strings to lists of retrieved chunk dictionaries.
+    """
+    # Extract settings with defaults
+    collection_name = settings.get("chromaCollection", "default_collection")
+    metric = settings.get("metric", "cosine")  # Options: "cosine", "l2", "ip"
+    chroma_mode = settings.get("chromaMode", "create")  # Options: "create", "use"
+    top_k = settings.get("top_k", 5)
+    similarity_threshold = settings.get("similarity_threshold", 0) / 100
+
+    # Initialize in-memory Chroma client
+    client = chromadb.Client()
+
+    # Handle collection based on mode
+    if chroma_mode == "create":
+        # Get or create collection
+        collection = client.get_or_create_collection(name=collection_name, distance_metric=metric)
+        # Prepare data for upsert
+        ids = [str(chunk["chunkId"]) for chunk in chunk_objs]
+        embeddings = [emb.tolist() if isinstance(emb, np.ndarray) else emb for emb in chunk_embeddings]
+        metadatas = [{"text": chunk["text"], "docTitle": chunk.get("docTitle", "")} for chunk in chunk_objs]
+        # Upsert vectors into collection
+        collection.upsert(ids=ids, embeddings=embeddings, metadatas=metadatas)
+    elif chroma_mode == "use":
+        # Get existing collection
+        try:
+            collection = client.get_collection(name=collection_name)
+        except Exception as e:
+            print(f"[ERROR] Collection '{collection_name}' does not exist: {e}")
+            return {q: [] for q in queries}
+    else:
+        print(f"[ERROR] Invalid chroma_mode '{chroma_mode}'. Must be 'create' or 'use'.")
+        return {q: [] for q in queries}
+
+    # Perform similarity search for each query
+    results = {}
+    for query, query_emb in zip(queries, query_embeddings):
+        # Convert query embedding to list if necessary
+        if isinstance(query_emb, np.ndarray):
+            query_emb = query_emb.tolist()
+        # Query the collection
+        query_results = collection.query(query_embeddings=[query_emb], n_results=top_k)
+        # Process results
+        retrieved = []
+        for id, distance, metadata in zip(query_results["ids"][0], query_results["distances"][0], query_results["metadatas"][0]):
+            # Calculate similarity based on metric
+            if metric == "l2":
+                similarity = 1 / (1 + distance)  # Transform L2 distance to similarity
+            elif metric == "cosine":
+                similarity = 1 - distance  # Cosine distance to cosine similarity
+            elif metric == "ip":
+                similarity = -distance  # Distance is -dot product, so negate to get dot product
+            if similarity >= similarity_threshold:
+                retrieved.append({
+                    "text": metadata["text"],
+                    "similarity": float(similarity),
+                    "docTitle": metadata.get("docTitle", ""),
+                    "chunkId": id
+                })
+        results[query] = retrieved
+
+    return results
+
 
 
 @app.route("/retrieve", methods=["POST"])
@@ -1447,4 +1503,4 @@ def retrieve():
     return jsonify({"results": results}), 200
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True, port="5001")
