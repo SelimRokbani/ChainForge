@@ -115,7 +115,8 @@ export type LLMSpec = {
   emoji: string;
   base_model: string;
   model: string;
-  temp: number;
+  provider?: string; // Added provider field (optional for backward compatibility)
+  temp?: number;
   key?: string;
   formData?: Dict<JSONCompatible>;
   settings?: Dict<JSONCompatible>;

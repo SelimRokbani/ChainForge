@@ -486,6 +486,45 @@ The Python interpeter in the browser is Pyodide. You may not be able to run some
     if (status !== Status.WARNING) setStatus(Status.WARNING);
   }, [status, setStatus]);
 
+  const filterMetadata = (metadata: Dict<any> | undefined): Dict<any> => {
+    if (!metadata) return {};
+
+    // Define which fields to keep
+    const fieldsToKeep = [
+      // Retrieval metadata
+      "retrievalMethod",
+      "queryGroup",
+      // Tabular data fields
+      "Question",
+      "Answer",
+      "ExpectedAnswer",
+      "Expected",
+      "question",
+      "answer",
+      "expectedAnswer",
+      "expected",
+      // Any score fields from evaluators
+      "score",
+      "answerCorrectness",
+      "contextRelevance",
+      "faithfulness",
+      "relevanceScore",
+      "ragasScore",
+    ];
+
+    // Create a filtered copy
+    const filtered: Dict<any> = {};
+
+    // Only keep fields in our whitelist
+    Object.entries(metadata).forEach(([key, value]) => {
+      if (fieldsToKeep.includes(key) || key.toLowerCase().includes("score")) {
+        filtered[key] = value;
+      }
+    });
+
+    return filtered;
+  };
+
   const handleRunClick = () => {
     // Pull input data
     const pulled_inputs = pullInputs();
@@ -527,8 +566,23 @@ The Python interpeter in the browser is Pyodide. You may not be able to run some
 
         // Ping any vis + inspect nodes attached to this node to refresh their contents:
         pingOutputNodes(id);
-        setLastResponses(stripLLMDetailsFromResponses(json.responses));
+
+        // Filter the responses for the inspector display
+        const filteredResponses = json.responses.map((resp) => {
+          // Create a copy of the response with filtered metadata
+          return {
+            ...resp,
+            vars: filterMetadata(resp.vars),
+            metavars: filterMetadata(resp.metavars),
+          };
+        });
+
+        // Set filtered responses for the inspector
+        setLastResponses(stripLLMDetailsFromResponses(filteredResponses));
+
+        // Keep original context for AI features
         setLastContext(getVarsAndMetavars(json.responses));
+
         setLastRunSuccess(true);
 
         if (status !== Status.READY && !showDrawer)
@@ -544,8 +598,9 @@ The Python interpeter in the browser is Pyodide. You may not be able to run some
                   image:
                     typeof r === "object" && r.t === "img" ? r.d : undefined,
                   prompt: resp_obj.prompt,
-                  fill_history: resp_obj.vars,
-                  metavars: resp_obj.metavars || {},
+                  // Use filtered metadata for display
+                  fill_history: filterMetadata(resp_obj.vars),
+                  metavars: filterMetadata(resp_obj.metavars || {}),
                   llm: resp_obj.llm,
                   uid: resp_obj.uid,
                 };

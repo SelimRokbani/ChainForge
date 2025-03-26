@@ -141,19 +141,22 @@ const ChunkingNode: React.FC<ChunkingNodeProps> = ({ data, id }) => {
             formData.append("library", method.library);
             formData.append("text", fileInfo.text || "");
 
-            // Add the user settings 
+            // Add the user settings
             if (method.settings) {
               // Extract specific settings based on the method type
               const { baseMethod } = method;
               const settingsObj = { ...method.settings };
-              
+
               // Debug the settings
-              console.log(`Sending settings for ${method.methodName}:`, settingsObj);
-              
+              console.log(
+                `Sending settings for ${method.methodName}:`,
+                settingsObj,
+              );
+
               // Add all settings from the settings object
               Object.entries(settingsObj).forEach(([k, v]) => {
                 // Only send relevant settings (not UI-specific ones)
-                if (k !== 'displayName' && k !== 'emoji') {
+                if (k !== "displayName" && k !== "emoji") {
                   formData.append(k, String(v));
                 }
               });

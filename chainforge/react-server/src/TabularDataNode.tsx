@@ -22,8 +22,13 @@ import { AlertModalContext } from "./AlertModal";
 import RenameValueModal, { RenameValueModalRef } from "./RenameValueModal";
 import useStore from "./store";
 import { sampleRandomElements } from "./backend/utils";
-import { Dict, TabularDataRowType, TabularDataColType } from "./backend/typing";
-import { Position } from "reactflow";
+import {
+  Dict,
+  TabularDataRowType,
+  TabularDataColType,
+  TemplateVarInfo,
+} from "./backend/typing";
+import { Position, Handle } from "reactflow";
 import { AIGenReplaceTablePopover } from "./AiPopover";
 import { parseTableData } from "./backend/tableUtils";
 
@@ -424,20 +429,75 @@ const TabularDataNode: React.FC<TabularDataNodeProps> = ({ data, id }) => {
 
   // Updates the internal data store whenever the table data changes
   useEffect(() => {
-    let sel_rows: TabularDataRowType[] | null = null;
+    let rows_to_use = tableData;
 
     // Check for sampling
     if (shouldSample && sampleNum !== undefined) {
       // If sampling is enabled, randomly choose only sampleNum rows:
-      sel_rows = sampleRandomElements(tableData, sampleNum);
+      rows_to_use = sampleRandomElements(tableData, sampleNum);
     }
 
+    // Create outputs that include ALL column data in metadata
+    const outputFields: { [key: string]: TemplateVarInfo[] } = {};
+
+    // Initialize with empty arrays for each column
+    tableColumns.forEach((col) => {
+      outputFields[col.header] = [];
+    });
+
+    // Add a special combined field that includes all data
+    outputFields.AllData = [];
+
+    // Process each row
+    rows_to_use.forEach((row) => {
+      // Create a metadata object with ALL column data for this row
+      const rowMetadata: Dict<any> = {};
+      tableColumns.forEach((col) => {
+        if (col.key in row) {
+          rowMetadata[col.header] = row[col.key];
+        }
+      });
+
+      // For each column, create a TemplateVarInfo with ALL column data in metavars
+      tableColumns.forEach((col) => {
+        if (col.key in row) {
+          const value = row[col.key];
+          outputFields[col.header].push({
+            text: String(value),
+            uid: uuidv4(),
+            metavars: { ...rowMetadata }, // Include ALL column data in metavars
+            fill_history: { ...rowMetadata }, // Also in fill_history for compatibility
+          });
+        }
+      });
+
+      // Create a special combined object with all data
+      outputFields.AllData.push({
+        text: row[tableColumns[0]?.key] || "", // Use first column as text
+        uid: uuidv4(),
+        metavars: { ...rowMetadata },
+        fill_history: { ...rowMetadata },
+      });
+    });
+
+    // Update node data with both raw table data and processed outputs
     setDataPropsForNode(id, {
       rows: tableData,
       columns: tableColumns,
-      sel_rows,
+      fields: outputFields,
     });
-  }, [tableData, tableColumns, shouldSample, sampleNum]);
+
+    // Ping connected nodes to update
+    pingOutputNodes(id);
+  }, [
+    tableData,
+    tableColumns,
+    shouldSample,
+    sampleNum,
+    id,
+    setDataPropsForNode,
+    pingOutputNodes,
+  ]);
 
   const handleError = (err: Error) => {
     if (showAlert) showAlert(err.message);

@@ -10,25 +10,25 @@ export const OverlappingLangChainSchema: ModelSettingsDict = {
     type: "object",
     required: ["chunk_size", "chunk_overlap"],
     properties: {
-      chunk_size: { type: "number", default: 300, title: "Chunk Size" },
-      chunk_overlap: { type: "number", default: 50, title: "Overlap" },
+      chunk_size: { type: "number", default: 50, title: "Chunk Size" },
+      chunk_overlap: { type: "number", default: 10, title: "Overlap" },
     },
   },
   uiSchema: {
     chunk_size: {
       "ui:widget": "range", // HTML range input
       "ui:options": {
-        min: 100,
-        max: 2000,
-        step: 50,
+        min: 20,
+        max: 1000,
+        step: 10,
       },
     },
     chunk_overlap: {
       "ui:widget": "range",
       "ui:options": {
         min: 0,
-        max: 500,
-        step: 10,
+        max: 100,
+        step: 5,
       },
     },
   },
@@ -47,12 +47,12 @@ export const OverlappingOpenAITiktokenSchema: ModelSettingsDict = {
     properties: {
       chunk_size: {
         type: "number",
-        default: 1024,
+        default: 50,
         title: "Chunk Size (Tokens)",
       },
       chunk_overlap: {
         type: "number",
-        default: 20,
+        default: 10,
         title: "Overlap (Tokens)",
       },
     },
@@ -61,17 +61,17 @@ export const OverlappingOpenAITiktokenSchema: ModelSettingsDict = {
     chunk_size: {
       "ui:widget": "range",
       "ui:options": {
-        min: 256,
-        max: 8192,
-        step: 256,
+        min: 20,
+        max: 1000,
+        step: 10,
       },
     },
     chunk_overlap: {
       "ui:widget": "range",
       "ui:options": {
         min: 0,
-        max: 500,
-        step: 25,
+        max: 100,
+        step: 5,
       },
     },
   },
@@ -96,7 +96,7 @@ export const OverlappingHuggingfaceTokenizerSchema: ModelSettingsDict = {
       },
       chunk_size: {
         type: "number",
-        default: 300,
+        default: 50,
         title: "Approx. tokens per chunk",
       },
     },
@@ -108,9 +108,9 @@ export const OverlappingHuggingfaceTokenizerSchema: ModelSettingsDict = {
     chunk_size: {
       "ui:widget": "range",
       "ui:options": {
-        min: 100,
-        max: 2000,
-        step: 50,
+        min: 20,
+        max: 1000,
+        step: 10,
       },
     },
   },

@@ -32,6 +32,7 @@ import {
   LLMResponse,
   LLMResponseData,
   LLMSpec,
+  TemplateVarInfo,
   QueryProgress,
 } from "./backend/typing";
 import { Status } from "./StatusIndicatorComponent";
@@ -41,7 +42,6 @@ import CancelTracker from "./backend/canceler";
 import { PromptInfo, PromptListModal, PromptListPopover } from "./PromptNode";
 import { useDisclosure } from "@mantine/hooks";
 import { PromptTemplate } from "./backend/template";
-
 // The default prompt shown in gray highlights to give people a good example of an evaluation prompt.
 const PLACEHOLDER_PROMPT =
   "Respond with 'true' if the text has a positive sentiment, 'false' if not.";
@@ -185,22 +185,60 @@ export const LLMEvaluatorComponent = forwardRef<
     onProgressChange?: (progress: QueryProgress) => void,
     cancelId?: string | number,
   ) => {
-    // Create prompt template to wrap user-specified scorer prompt and input data
     const template = getPromptTemplate();
     const llm_key = llmScorers[0].key ?? "";
+    const pullInputData = useStore.getState().pullInputData;
 
-    // Fetch info about the number of queries we'll need to make
-    return grabResponses(input_node_ids)
-      .then(function (resps) {
-        // Create progress listener
-        // Keeping track of progress (unpacking the progress state since there's only a single LLM)
-        const num_resps_required = resps.reduce(
-          (acc, resp_obj) => acc + resp_obj.responses.length,
-          0,
-        );
+    // Fetch raw input data from all connected nodes
+    const rawInputs = input_node_ids
+      .map((nodeId) => pullInputData(["responseBatch", "fields"], nodeId))
+      .filter(Boolean);
+
+    // Process JoinNode output (responseBatch) and TabularDataNode output (fields)
+    const processedResponses: LLMResponse[] = [];
+    let joinNodeData: (TemplateVarInfo | string)[] = [];
+    let tabularData: any[] = [];
+
+    rawInputs.forEach((input) => {
+      // Handle JoinNode output
+      if (input.responseBatch) {
+        joinNodeData = input.responseBatch as (TemplateVarInfo | string)[];
+        joinNodeData.forEach((item, idx) => {
+          const response: LLMResponse = {
+            uid: typeof item === "string" ? uuid() : item.uid || uuid(),
+            prompt: "Retrieved chunks",
+            responses: [typeof item === "string" ? item : item.text ?? ""],
+            llm:
+              typeof item === "string" ? "Retrieval" : item.llm || "Retrieval",
+            vars: typeof item === "string" ? {} : item.fill_history || {},
+            metavars: typeof item === "string" ? {} : item.metavars || {},
+          };
+          processedResponses.push(response);
+        });
+      }
+      // Handle TabularDataNode output
+      if (input.fields) {
+        tabularData = input.fields;
+      }
+    });
+
+    // Merge tabular data into responses (e.g., map Expected value to each response)
+    if (tabularData.length > 0) {
+      processedResponses.forEach((resp, idx) => {
+        const row = tabularData[idx % tabularData.length]; // Cycle through rows if fewer than responses
+        if (row) {
+          resp.vars = { ...resp.vars, ...row.fill_history };
+          resp.metavars = { ...resp.metavars, ...row.metavars };
+        }
+      });
+    }
+
+    const num_resps_required = processedResponses.length;
+
+    return Promise.resolve()
+      .then(() => {
         return onProgressChange
           ? (progress_by_llm: Dict<QueryProgress>) =>
-              // Debounce the progress bars UI update to ensure we don't re-render too often:
               debounce(() => {
                 onProgressChange({
                   success:
@@ -213,7 +251,6 @@ export const LLMEvaluatorComponent = forwardRef<
           : undefined;
       })
       .then((progress_listener) => {
-        // Run LLM as evaluator
         return evalWithLLM(
           id ?? Date.now().toString(),
           llmScorers[0],
@@ -224,18 +261,9 @@ export const LLMEvaluatorComponent = forwardRef<
           cancelId,
         );
       })
-      .then(function (res) {
-        // eslint-disable-next-line
-        debounce(() => {}, 1)(); // erase any pending debounces
-
-        // Check if there's an error; if so, bubble it up to user and exit:
-        if (res.errors && res.errors.length > 0) throw new Error(res.errors[0]);
-        else if (res.responses === undefined)
-          throw new Error(
-            "Unknown error encountered when requesting evaluations: empty response returned.",
-          );
-
-        // Success!
+      .then((res) => {
+        if (res.errors?.length > 0) throw new Error(res.errors[0]);
+        if (!res.responses) throw new Error("Unknown error encountered...");
         return res.responses;
       });
   };

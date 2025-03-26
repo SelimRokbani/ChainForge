@@ -33,6 +33,9 @@ import {
   IconSearch,
   IconTerminal,
   IconTrash,
+  IconList, // Add this import
+  IconColumns,
+  IconAlertCircle,
 } from "@tabler/icons-react";
 import BaseNode from "./BaseNode";
 import NodeLabel from "./NodeLabelComponent";
@@ -57,6 +60,8 @@ import { GatheringResponsesRingProgress } from "./LLMItemButtonGroup";
 import { Dict, LLMResponse, QueryProgress } from "./backend/typing";
 import { AlertModalContext } from "./AlertModal";
 import { Status } from "./StatusIndicatorComponent";
+import { ragasEvaluators } from "./RagasEvaluators";
+import ColumnMappingModal, { ColumnMappingModalRef, ColumnMapping } from "./ColumnMappingModal";
 
 const IS_RUNNING_LOCALLY = APP_IS_RUNNING_LOCALLY();
 
@@ -64,6 +69,47 @@ const EVAL_TYPE_PRETTY_NAME = {
   python: "Python",
   javascript: "JavaScript",
   llm: "LLM",
+};
+
+const filterMetadata = (metadata: Dict<any> | undefined): Dict<any> => {
+  if (!metadata) return {};
+
+  // Define which fields to keep
+  const fieldsToKeep = [
+    // Retrieval metadata
+    "similarity",
+    "retrievalMethod",
+    "queryGroup",
+    // Tabular data fields
+    "Question",
+    "Answer",
+    "ExpectedAnswer",
+    "Expected",
+    "question",
+    "answer",
+    "expectedAnswer",
+    "expected",
+    "expected_answers",
+    // Any score fields from evaluators
+    "score",
+    "answerCorrectness",
+    "contextRelevance",
+    "faithfulness",
+    "relevanceScore",
+    "ragasScore",
+  ];
+
+  // Create a filtered copy
+  const filtered: Dict<any> = {};
+
+  // Only keep fields in our whitelist
+  Object.entries(metadata).forEach(([key, value]) => {
+    if (fieldsToKeep.includes(key) || key.toLowerCase().includes("score")) {
+      filtered[key] = value;
+    }
+  });
+
+  return filtered;
 };
 
 export interface EvaluatorContainerProps {
@@ -209,6 +255,7 @@ export interface MultiEvalNodeProps {
     evaluators: EvaluatorContainerDesc[];
     refresh: boolean;
     title: string;
+    columnMappings?: ColumnMapping[];
   };
   id: string;
 }
@@ -269,6 +316,25 @@ const MultiEvalNode: React.FC<MultiEvalNodeProps> = ({ data, id }) => {
     },
     [evaluators],
   );
+
+  // Add a function to handle selecting a RAGAS evaluator
+  interface RagasEvaluator {
+    name: string;
+    language: "python" | "javascript";
+    code: string;
+  }
+
+  const addRagasEvaluator = (evaluator: RagasEvaluator) => {
+    setEvaluators(
+      evaluators.concat({
+        name: evaluator.name,
+        uid: uuid(),
+        type: evaluator.language === "python" ? "python" : "javascript",
+        state: { code: evaluator.code },
+        justAdded: true,
+      }),
+    );
+  };
 
   // Sync evaluator state to stored state of this node
   useEffect(() => {
@@ -408,13 +474,85 @@ const MultiEvalNode: React.FC<MultiEvalNodeProps> = ({ data, id }) => {
     }
   }, [pullInputData, id, toStandardResponseFormat]);
 
+  // Column mapping related state and refs
+  const [columnMappings, setColumnMappings] = useState<ColumnMapping[]>(data.columnMappings || []);
+  const [needsColumnMapping, setNeedsColumnMapping] = useState<boolean>(false);
+  const columnMappingModalRef = useRef<ColumnMappingModalRef>(null);
+
+  // Check if column mapping is needed
+  const checkForColumnMapping = useCallback((inputs: LLMResponse[]) => {
+    if (inputs.length === 0) return false;
+    
+    // If we already have mappings, we don't need to map again
+    if (columnMappings.length > 0) return false;
+
+    // Get all the fields from the first response's metadata to detect columns
+    const firstResponse = inputs[0];
+    if (!firstResponse || (!firstResponse.vars && !firstResponse.metavars)) {
+      return false;
+    }
+    
+    // Get metadata fields from both vars and metavars
+    const metadataFields = new Set<string>();
+    
+    if (firstResponse.vars) {
+      Object.keys(firstResponse.vars).forEach(key => metadataFields.add(key));
+    }
+    
+    if (firstResponse.metavars) {
+      Object.keys(firstResponse.metavars).forEach(key => metadataFields.add(key));
+    }
+    
+    // If we have some metadata fields but no mappings, we need to map
+    return metadataFields.size > 0;
+  }, [columnMappings]);
+
+  // Function to open column mapping modal
+  const openColumnMappingModal = useCallback((inputs: LLMResponse[]) => {
+    if (!columnMappingModalRef.current) return;
+    
+    // Get all unique field names from the inputs' metadata
+    const fieldNames = new Set<string>();
+    
+    inputs.forEach(response => {
+      if (response.vars) {
+        Object.keys(response.vars).forEach(key => fieldNames.add(key));
+      }
+      if (response.metavars) {
+        Object.keys(response.metavars).forEach(key => fieldNames.add(key));
+      }
+    });
+    
+    // Convert to array and remove any system fields we don't want to expose
+    const fieldsToMap = Array.from(fieldNames).filter(field => 
+      !['__uid', 'uid', '__system', 'text'].includes(field)
+    );
+    
+    // Open the modal with the detected fields
+    columnMappingModalRef.current.openModal(fieldsToMap, (newMappings: ColumnMapping[]) => {
+      setColumnMappings(newMappings);
+      setDataPropsForNode(id, { columnMappings: newMappings });
+      setNeedsColumnMapping(false);
+      // After getting mappings, retry the run if we were in the middle of one
+      if (status === Status.LOADING) {
+        handleRunClick();
+      }
+    });
+  }, [setColumnMappings, setDataPropsForNode, id, status]);
+
   const handleRunClick = useCallback(() => {
     // Pull inputs to the node
     const pulled_inputs = handlePullInputs();
     if (!pulled_inputs || pulled_inputs.length === 0) return;
 
+    // Check if we need column mapping first
+    if (checkForColumnMapping(pulled_inputs)) {
+      setNeedsColumnMapping(true);
+      openColumnMappingModal(pulled_inputs);
+      return;
+    }
+
     // Get the ids from the connected input nodes:
-    // TODO: Remove this dependency; have everything go through pull instead.
     const input_node_ids = inputEdgesForNode(id).map((e) => e.source);
     if (input_node_ids.length === 0) {
       console.warn("No inputs to multi-evaluator node.");
@@ -451,150 +589,215 @@ const MultiEvalNode: React.FC<MultiEvalNodeProps> = ({ data, id }) => {
       )(evaluator_idx, progress);
     };
 
-    // Run all evaluators here!
-    // TODO
-    const runPromises = evaluatorComponentRefs.current.map(
-      ({ type, name, ref }, idx) => {
-        if (ref === null) return { type: "error", name, result: null };
+    try {
+      // Run all evaluators here!
+      // TODO
+      const runPromises = evaluatorComponentRefs.current.map(
+        ({ type, name, ref }, idx) => {
+          if (ref === null) return { type: "error", name, result: null };
 
-        // Start loading spinner status on running evaluators
-        updateProgressRing(idx, { success: 0, error: 0 });
+          // Start loading spinner status on running evaluators
+          updateProgressRing(idx, { success: 0, error: 0 });
 
-        // Run each evaluator
-        if (type === "code") {
-          // Run code evaluator
-          // TODO: Change runInSandbox to be user-controlled, for Python code evals (right now it is always sandboxed)
-          return (ref as CodeEvaluatorComponentRef)
-            .run(pulled_inputs, undefined)
-            .then((ret) => {
-              console.log("Code evaluator done!", ret);
-              updateProgressRing(idx, undefined);
-              if (ret.error !== undefined) throw new Error(ret.error);
-              return {
-                type: "code",
-                name,
-                result: ret.responses,
-              };
-            });
-        } else {
-          // Run LLM-based evaluator
-          // TODO: Add back live progress, e.g. (progress) => updateProgressRing(idx, progress)) but with appropriate mapping for progress.
-          return (ref as LLMEvaluatorComponentRef)
-            .run(input_node_ids, (progress) => {
-              updateProgressRing(idx, progress);
-            })
-            .then((ret) => {
-              console.log("LLM evaluator done!", ret);
-              updateProgressRing(idx, undefined);
-              return {
-                type: "llm",
-                name,
-                result: ret,
-              };
-            });
-        }
-      },
-    );
-
-    // When all evaluators finish...
-    Promise.allSettled(runPromises).then((settled) => {
-      if (settled.some((s) => s.status === "rejected")) {
-        setStatus(Status.ERROR);
-        setLastRunSuccess(false);
-        // @ts-expect-error Reason exists on rejected settled promises, but TS doesn't know it for some reason.
-        handleError(settled.find((s) => s.status === "rejected").reason);
-        return;
-      }
-
-      // Remove progress rings without errors
-      setEvaluators((evs) =>
-        evs.map((e) => {
-          if (e.progress && !e.progress.error) e.progress = undefined;
-          return e;
-        }),
-      );
-
-      // Ignore null refs
-      settled = settled.filter(
-        (s) => s.status === "fulfilled" && s.value.result !== null,
-      );
-
-      // Success -- set the responses for the inspector
-      // First we need to group up all response evals by UID, *within* each evaluator.
-      const evalResults = settled.map((s) => {
-        const v =
-          s.status === "fulfilled"
-            ? s.value
-            : { type: "code", name: "Undefined", result: [] };
-        if (v.type === "llm") return v; // responses are already batched by uid
-        // If code evaluator, for some reason, in this version of CF the code eval has de-batched responses.
-        // We need to re-batch them by UID before returning, to correct this:
-        return {
-          type: v.type,
-          name: v.name,
-          result: batchResponsesByUID(v.result ?? []),
-        };
-      });
-
-      // Now we have a duplicates of each response object, one per evaluator run,
-      // with evaluation results per evaluator. They are not yet merged. We now need
-      // to merge the evaluation results within response objects with the same UIDs.
-      // It *should* be the case (invariant) that response objects with the same UID
-      // have exactly the same number of evaluation results (e.g. n=3 for num resps per prompt=3).
-      const merged_res_objs_by_uid: Dict<LLMResponse> = {};
-      // For each set of evaluation results...
-      evalResults.forEach(({ name, result }) => {
-        // For each response obj in the results...
-        result?.forEach((res_obj: LLMResponse) => {
-          // If it's not already in the merged dict, add it:
-          const uid = res_obj.uid;
-          if (
-            res_obj.eval_res !== undefined &&
-            !(uid in merged_res_objs_by_uid)
-          ) {
-            // Transform evaluation results into dict form, indexed by "name" of the evaluator:
-            res_obj.eval_res.items = res_obj.eval_res.items.map((item) => {
-              if (typeof item === "object") item = item.toString();
-              return {
-                [name]: item,
-              };
-            });
-            res_obj.eval_res.dtype = "KeyValue_Mixed"; // "KeyValue_Mixed" enum;
-            merged_res_objs_by_uid[uid] = res_obj; // we don't make a copy, to save time
-          } else {
-            // It is already in the merged dict, so add the new eval results
-            // Sanity check that the lengths of eval result lists are equal across evaluators:
-            if (merged_res_objs_by_uid[uid].eval_res === undefined) return;
-            else if (
-              // @ts-expect-error We've already checked that eval_res is defined, yet TS throws an error anyway... skip it:
-              merged_res_objs_by_uid[uid].eval_res.items.length !==
-              res_obj.eval_res?.items?.length
-            ) {
-              console.error(
-                `Critical error: Evaluation result lists for response ${uid} do not contain the same number of items per evaluator. Skipping...`,
-              );
-              return;
+          // Run each evaluator
+          try {
+            if (type === "code") {
+              // Run code evaluator
+              // TODO: Change runInSandbox to be user-controlled, for Python code evals (right now it is always sandboxed)
+              return (ref as CodeEvaluatorComponentRef)
+                .run(pulled_inputs, undefined)
+                .then((ret) => {
+                  console.log("Code evaluator done!", ret);
+                  updateProgressRing(idx, undefined);
+                  if (ret.error !== undefined) throw new Error(ret.error);
+                  return {
+                    type: "code",
+                    name,
+                    result: ret.responses,
+                  };
+                });
+            } else {
+              // Run LLM-based evaluator
+              // TODO: Add back live progress, e.g. (progress) => updateProgressRing(idx, progress)) but with appropriate mapping for progress.
+              return (ref as LLMEvaluatorComponentRef)
+                .run(input_node_ids, (progress) => {
+                  updateProgressRing(idx, progress);
+                })
+                .then((ret) => {
+                  console.log("LLM evaluator done!", ret);
+                  updateProgressRing(idx, undefined);
+                  return {
+                    type: "llm",
+                    name,
+                    result: ret,
+                  };
+                });
             }
-            // Add the new evaluation result, keyed by evaluator name:
-            // @ts-expect-error We've already checked that eval_res is defined, yet TS throws an error anyway... skip it:
-            merged_res_objs_by_uid[uid].eval_res.items.forEach((item, idx) => {
-              if (typeof item === "object") {
-                let v = res_obj.eval_res?.items[idx];
-                if (typeof v === "object") v = v.toString();
-                item[name] = v ?? "undefined";
+          } catch (err) {
+            handleError(err as Error);
+            return { type: "error", name, result: null };
+          }
+        },
+      );
+
+      // When all evaluators finish...
+      Promise.allSettled(runPromises).then((settled) => {
+        if (settled.some((s) => s.status === "rejected")) {
+          setStatus(Status.ERROR);
+          setLastRunSuccess(false);
+          // @ts-expect-error Reason exists on rejected settled promises, but TS doesn't know it for some reason.
+          handleError(settled.find((s) => s.status === "rejected").reason);
+          return;
+        }
+
+        // Remove progress rings without errors
+        setEvaluators((evs) =>
+          evs.map((e) => {
+            if (e.progress && !e.progress.error) e.progress = undefined;
+            return e;
+          }),
+        );
+
+        // Ignore null refs
+        settled = settled.filter(
+          (s) => s.status === "fulfilled" && s.value.result !== null,
+        );
+
+        // Success -- set the responses for the inspector
+        // First we need to group up all response evals by UID, *within* each evaluator.
+        const evalResults = settled.map((s) => {
+          const v =
+            s.status === "fulfilled"
+              ? s.value
+              : { type: "code", name: "Undefined", result: [] };
+          if (v.type === "llm") return v; // responses are already batched by uid
+          // If code evaluator, for some reason, in this version of CF the code eval has de-batched responses.
+          // We need to re-batch them by UID before returning, to correct this:
+          return {
+            type: v.type,
+            name: v.name,
+            result: batchResponsesByUID(v.result ?? []),
+          };
+        });
+
+        // Now we have a duplicates of each response object, one per evaluator run,
+        // with evaluation results per evaluator. They are not yet merged. We now need
+        // to merge the evaluation results within response objects with the same UIDs.
+        // It *should* be the case (invariant) that response objects with the same UID
+        // have exactly the same number of evaluation results (e.g. n=3 for num resps per prompt=3).
+        const merged_res_objs_by_uid: Dict<LLMResponse> = {};
+        // For each set of evaluation results...
+        evalResults.forEach(({ name, result }) => {
+          // For each response obj in the results...
+          result?.forEach((res_obj: LLMResponse) => {
+            // If it's not already in the merged dict, add it:
+            const uid = res_obj.uid || uuid(); // Ensure there's a UID
+            if (
+              res_obj.eval_res !== undefined &&
+              !(uid in merged_res_objs_by_uid)
+            ) {
+              // Transform evaluation results into string values for safer handling
+              res_obj.eval_res.items = res_obj.eval_res.items.map((item) => {
+                // Ensure items are safely converted to strings
+                return {
+                  [name]: safeStringify(item),
+                };
+              });
+
+              res_obj.eval_res.dtype = "KeyValue_Mixed"; // "KeyValue_Mixed" enum;
+              merged_res_objs_by_uid[uid] = res_obj; // we don't make a copy, to save time
+            } else if (res_obj.eval_res !== undefined) {
+              // It is already in the merged dict, so add the new eval results
+              // Sanity check that the lengths of eval result lists are equal across evaluators:
+              if (!merged_res_objs_by_uid[uid].eval_res) {
+                merged_res_objs_by_uid[uid].eval_res = {
+                  items: [],
+                  dtype: "KeyValue_Mixed",
+                };
               }
+
+              // Check if we have matching array lengths
+              if (
+                merged_res_objs_by_uid[uid].eval_res?.items?.length !==
+                res_obj.eval_res?.items?.length
+              ) {
+                console.warn(
+                  `Warning: Evaluation result lists for response ${uid} have different lengths. Attempting to reconcile...`,
+                );
+
+                // Add missing items to make arrays the same length
+                const targetLength = Math.max(
+                  merged_res_objs_by_uid[uid].eval_res?.items?.length || 0,
+                  res_obj.eval_res?.items?.length || 0,
+                );
+
+                while (
+                  (merged_res_objs_by_uid[uid].eval_res?.items?.length || 0) <
+                  targetLength
+                ) {
+                  merged_res_objs_by_uid[uid].eval_res?.items.push({});
+                }
+              }
+
+              // Add the new evaluation result, keyed by evaluator name:
+              if (
+                res_obj.eval_res?.items &&
+                Array.isArray(res_obj.eval_res.items)
+              ) {
+                res_obj.eval_res.items.forEach((item, idx) => {
+                  if (
+                    merged_res_objs_by_uid[uid].eval_res?.items &&
+                    merged_res_objs_by_uid[uid].eval_res?.items[idx]
+                  ) {
+                    (
+                      merged_res_objs_by_uid[uid].eval_res?.items[idx] as Dict<
+                        string | number | boolean
+                      >
+                    )[name] = safeStringify(item);
+                  }
+                });
+              }
+            }
+          });
+        });
+
+        // We now have a dict of the form { uid: LLMResponse }
+        // We need return only the values of this dict:
+        const finalResponses = Object.values(merged_res_objs_by_uid);
+
+        // Make sure all response objects have prompt and llm fields to avoid sorting errors
+        finalResponses.forEach((resp) => {
+          if (!resp.prompt) resp.prompt = "";
+          if (!resp.llm) resp.llm = "unknown";
+
+          // Filter metadata to keep only relevant fields
+          resp.vars = filterMetadata(resp.vars);
+          resp.metavars = filterMetadata(resp.metavars);
+
+          // Apply column mappings to eval results if they exist
+          if (columnMappings.length > 0 && resp.eval_res && resp.eval_res.items) {
+            resp.eval_res.items = resp.eval_res.items.map(item => {
+              const mappedItem: Dict<any> = {};
+              
+              // Copy each field using the mapped display name if available
+              for (const [key, value] of Object.entries(item)) {
+                const mapping = columnMappings.find(m => m.responseField === key);
+                const displayKey = mapping ? mapping.displayName : key;
+                mappedItem[displayKey] = value;
+              }
+              
+              return mappedItem;
             });
           }
         });
+
+        setLastResponses(finalResponses);
+        setLastRunSuccess(true);
+        setStatus(Status.READY);
       });
-
-      // We now have a dict of the form { uid: LLMResponse }
-      // We need return only the values of this dict:
-      setLastResponses(Object.values(merged_res_objs_by_uid));
-      setLastRunSuccess(true);
-
-      setStatus(Status.READY);
-    });
+    } catch (err) {
+      handleError(err as Error);
+    }
   }, [
     handlePullInputs,
     pingOutputNodes,
@@ -602,6 +805,9 @@ const MultiEvalNode: React.FC<MultiEvalNodeProps> = ({ data, id }) => {
     showDrawer,
     evaluators,
     evaluatorComponentRefs,
+    checkForColumnMapping,
+    openColumnMappingModal,
+    columnMappings,
   ]);
 
   const showResponseInspector = useCallback(() => {
@@ -619,6 +825,34 @@ const MultiEvalNode: React.FC<MultiEvalNodeProps> = ({ data, id }) => {
     }
   }, [data]);
 
+  // Effect to initialize column mappings from data props if available
+  useEffect(() => {
+    if (data.columnMappings && data.columnMappings.length > 0) {
+      setColumnMappings(data.columnMappings);
+    }
+  }, [data.columnMappings]);
+
+  // Add a button to manually open the column mapping modal
+  const openColumnMappingsButton = useMemo(() => (
+    <Tooltip label="Configure Column Mappings" position="left" withArrow>
+      <ActionIcon 
+        variant="outline" 
+        color="gray" 
+        size="sm" 
+        onClick={() => {
+          const inputs = handlePullInputs();
+          if (inputs.length > 0) {
+            openColumnMappingModal(inputs);
+          } else {
+            showAlert && showAlert("No input data available. Connect inputs before configuring columns.");
+          }
+        }}
+      >
+        <IconColumns size="12px" />
+      </ActionIcon>
+    </Tooltip>
+  ), [handlePullInputs, openColumnMappingModal, showAlert]);
+
   return (
     <BaseNode
       classNames="evaluator-node"
@@ -632,6 +866,21 @@ const MultiEvalNode: React.FC<MultiEvalNodeProps> = ({ data, id }) => {
         status={status}
         handleRunClick={handleRunClick}
         runButtonTooltip="Run all evaluators over inputs"
+        customButtons={[
+          // Add button for column mapping configuration
+          columnMappings.length > 0 ? (
+            <Tooltip
+              key="column-mapping-status"
+              label="Column mappings configured"
+              position="top"
+              withArrow
+            >
+              <div style={{ color: '#4CAF50', fontSize: '10px', marginRight: '5px' }}>
+                <IconColumns size="14px" />
+              </div>
+            </Tooltip>
+          ) : null
+        ]}
       />
 
       <LLMResponseInspectorModal
@@ -640,6 +889,21 @@ const MultiEvalNode: React.FC<MultiEvalNodeProps> = ({ data, id }) => {
       />
       {/* <PickCriteriaModal ref={pickCriteriaModalRef} /> */}
       <iframe style={{ display: "none" }} id={`${id}-iframe`}></iframe>
+      
+      {/* Add the Column Mapping Modal */}
+      <ColumnMappingModal ref={columnMappingModalRef} title="Configure Evaluation Column Names" />
+
+      {/* Display a message if column mapping is needed */}
+      {needsColumnMapping && (
+        <Alert 
+          color="yellow" 
+          title="Column Mapping Needed" 
+          mb={10}
+          icon={<IconAlertCircle size="1rem" />}
+        >
+          We detected metadata fields in your inputs. Please configure how these should be displayed.
+        </Alert>
+      )}
 
       {/* {evaluatorComponents} */}
       {evaluators.map((e, idx) => (
@@ -758,69 +1022,75 @@ const MultiEvalNode: React.FC<MultiEvalNodeProps> = ({ data, id }) => {
       /> */}
 
       <div className="add-text-field-btn">
-        <Menu withinPortal position="right-start" shadow="sm">
-          <Menu.Target>
-            <Tooltip label="Add evaluator" position="left" withArrow>
-              <ActionIcon variant="outline" color="gray" size="sm">
-                <IconPlus size="12px" />
-              </ActionIcon>
-            </Tooltip>
-          </Menu.Target>
+        <Group spacing="xs">
+          {openColumnMappingsButton}
+          <Menu withinPortal position="right-start" shadow="sm">
+            <Menu.Target>
+              <Tooltip label="Add evaluator" position="left" withArrow>
+                <ActionIcon variant="outline" color="gray" size="sm">
+                  <IconPlus size="12px" />
+                </ActionIcon>
+              </Tooltip>
+            </Menu.Target>
 
-          <Menu.Dropdown>
-            <Menu.Item
-              icon={<IconTerminal size="14px" />}
-              onClick={() =>
-                addEvaluator(
-                  `Criteria ${evaluators.length + 1}`,
-                  "javascript",
-                  {
-                    code: "function evaluate(r) {\n\treturn r.text.length;\n}",
-                  },
-                )
-              }
-            >
-              JavaScript
-            </Menu.Item>
-            {IS_RUNNING_LOCALLY ? (
+            <Menu.Dropdown>
               <Menu.Item
                 icon={<IconTerminal size="14px" />}
                 onClick={() =>
-                  addEvaluator(`Criteria ${evaluators.length + 1}`, "python", {
-                    code: "def evaluate(r):\n\treturn len(r.text)",
-                    sandbox: true,
+                  addEvaluator(
+                    `Criteria ${evaluators.length + 1}`,
+                    "javascript",
+                    {
+                      code: "function evaluate(r) {\n\treturn r.text.length;\n}",
+                    },
+                  )
+                }
+              >
+                JavaScript
+              </Menu.Item>
+              {IS_RUNNING_LOCALLY ? (
+                <Menu.Item
+                  icon={<IconTerminal size="14px" />}
+                  onClick={() =>
+                    addEvaluator(`Criteria ${evaluators.length + 1}`, "python", {
+                      code: "def evaluate(r):\n\treturn len(r.text)",
+                      sandbox: true,
+                    })
+                  }
+                >
+                  Python
+                </Menu.Item>
+              ) : (
+                <></>
+              )}
+              <Menu.Item
+                icon={<IconRobot size="14px" />}
+                onClick={() =>
+                  addEvaluator(`Criteria ${evaluators.length + 1}`, "llm", {
+                    prompt: "",
+                    format: "bin",
                   })
                 }
               >
-                Python
+                LLM
               </Menu.Item>
-            ) : (
-              <></>
-            )}
-            <Menu.Item
-              icon={<IconRobot size="14px" />}
-              onClick={() =>
-                addEvaluator(`Criteria ${evaluators.length + 1}`, "llm", {
-                  prompt: "",
-                  format: "bin",
-                })
-              }
-            >
-              LLM
-            </Menu.Item>
-            {/* {AI_SUPPORT_ENABLED ? <Menu.Divider /> : <></>} */}
-            {/* {AI_SUPPORT_ENABLED ? (
-              <Menu.Item
-                icon={<IconSparkles size="14px" />}
-                onClick={onClickPickCriteria}
-              >
-                Let an AI decide!
-              </Menu.Item>
-            ) : (
-              <></>
-            )} */}
-          </Menu.Dropdown>
-        </Menu>
+
+              {/* Add RAGAS evaluator section */}
+              <Menu.Divider />
+              <Menu.Label>RAGAS Evaluators</Menu.Label>
+
+              {ragasEvaluators.map((evaluator, idx) => (
+                <Menu.Item
+                  key={`ragas-${idx}`}
+                  icon={<IconList size="14px" />}
+                  onClick={() => addRagasEvaluator(evaluator)}
+                >
+                  {evaluator.name}
+                </Menu.Item>
+              ))}
+            </Menu.Dropdown>
+          </Menu>
+        </Group>
       </div>
 
       {/* EvalGen {evaluators && evaluators.length === 0 ? (
@@ -873,3 +1143,18 @@ const MultiEvalNode: React.FC<MultiEvalNodeProps> = ({ data, id }) => {
 };
 
 export default MultiEvalNode;
+function safeStringify(
+  item: string | number | boolean | Dict<string | number | boolean>,
+): any {
+  if (
+    typeof item === "string" ||
+    typeof item === "number" ||
+    typeof item === "boolean"
+  ) {
+    return item;
+  } else if (typeof item === "object" && item !== null) {
+    return JSON.stringify(item);
+  } else {
+    return String(item);
+  }
+}
