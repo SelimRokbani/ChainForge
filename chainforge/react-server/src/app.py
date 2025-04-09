@@ -290,103 +290,6 @@ def cosine_similarity(a, b):
     normB = math.sqrt(sum(y * y for y in b))
     return dot / (normA * normB + 1e-10)    
 
-
-def faiss_retrieval(embeddings, store_mode, store_path, query, top_k=5):
-    try:# Try to load the index
-        if store_mode == "load":
-            if not os.path.exists(store_path):
-                return jsonify({
-                    "error": f"FAISS index not found at {store_path}",
-                    "vectorstore_status": "error"
-                }), 404
-            
-            try:
-                vector_store = FAISS.load_local(store_path, embeddings, allow_dangerous_deserialization=True)
-                
-                # Verify embedding dimensions
-                test_embedding = embeddings.embed_query("test")
-                if vector_store.index.d != len(test_embedding):
-                    return jsonify({
-                        "error": "Embedding dimensions mismatch. Index was created with different embeddings.",
-                        "vectorstore_status": "error"
-                    }), 400
-                
-                # Perform similarity search
-                results = vector_store.similarity_search_with_score(query, k=top_k)
-                
-                # Format results
-                retrieved = [{
-                    "text": doc.page_content,
-                    "similarity": float(score),  # Convert numpy float to native float
-                    "docTitle": doc.metadata.get("docTitle", ""),
-                    "chunkId": doc.metadata.get("chunkId", str(i))
-                } for i, (doc, score) in enumerate(results)]
-                
-                return jsonify({
-                    "retrieved": retrieved,
-                    "vectorstore_status": "connected"
-                }), 200
-
-            except Exception as e:
-                logger.error(f"Error loading FAISS index: {str(e)}")
-                return jsonify({
-                    "error": f"Failed to load FAISS index: {str(e)}",
-                    "vectorstore_status": "error"
-                }), 500
-
-        elif store_mode == "create":
-            if not os.path.isdir(store_path):
-                return jsonify({
-                    "error": f"Directory not found: {store_path}",
-                    "vectorstore_status": "error"
-                }), 404
-
-            try:
-                # Create documents with metadata
-                documents = [
-                    Document(
-                        page_content=text,
-                        metadata={
-                            "docTitle": obj.get("docTitle", ""),
-                            "chunkId": obj.get("chunkId", str(i))
-                        }
-                    ) for i, (text, obj) in enumerate(zip(chunk_texts, chunk_objs))
-                ]
-                
-                # Create and save the index
-                vector_store = FAISS.from_documents(documents, embeddings)
-                vector_store.save_local(store_path)
-                
-                # Perform similarity search
-                results = vector_store.similarity_search_with_score(query, k=top_k)
-                
-                # Format results
-                retrieved = [{
-                    "text": doc.page_content,
-                    "similarity": float(score),
-                    "docTitle": doc.metadata.get("docTitle", ""),
-                    "chunkId": doc.metadata.get("chunkId", "")
-                } for doc, score in results]
-                
-                return jsonify({
-                    "retrieved": retrieved,
-                    "vectorstore_status": "connected"
-                }), 200
-
-            except Exception as e:
-                logger.error(f"Error creating FAISS index: {str(e)}")
-                return jsonify({
-                    "error": f"Failed to create FAISS index: {str(e)}",
-                    "vectorstore_status": "error"
-                }), 500
-
-    except Exception as e:
-        logger.error(f"FAISS operation failed: {str(e)}")
-        return jsonify({
-            "error": f"FAISS operation failed: {str(e)}",
-            "vectorstore_status": "error"
-        }), 500
-
 # -------------- Whoosh (Optional) --------------
 whoosh_index_dir = tempfile.mkdtemp()
 schema = Schema(id=ID(stored=True, unique=True), content=TEXT(stored=True))
@@ -706,28 +609,36 @@ def handle_tfidf(chunk_objs, queries, settings):
     
     results = {}
     for query in queries:
-        query_vec = vectorizer.transform([query])
-        sims = (tfidf_matrix * query_vec.T).toarray().flatten()
-        
-        # Normalize scores
-        max_sim = sims.max() if sims.size > 0 and sims.max() > 0 else 1
-        normalized_sims = sims / max_sim
-        
-        # Build result objects
-        retrieved = []
-        ranked_idx = normalized_sims.argsort()[::-1][:top_k]
-        
-        for i in ranked_idx:
-            chunk = chunk_objs[i]
-            retrieved.append({
-                "text": chunk.get("text", ""),
-                "similarity": float(normalized_sims[i]),
-                "docTitle": chunk.get("docTitle", ""),
-                "chunkId": chunk.get("chunkId", ""),
-            })
-        
-        results[query] = retrieved
-    
+        try:
+            query_vec = vectorizer.transform([query])
+            # Calculate cosine similarities
+            sims = (tfidf_matrix * query_vec.T).toarray().flatten()
+
+            # Normalize scores (0 to 1 range relative to max score)
+            max_sim = sims.max() if sims.size > 0 and sims.max() > 0 else 1.0
+            normalized_sims = sims / max_sim
+
+            # Build result objects
+            retrieved = []
+            # Get indices of top_k scores using numpy.argsort for efficiency
+            ranked_idx = np.argsort(normalized_sims)[::-1][:top_k] # High to low
+
+            for i in ranked_idx:
+                # Ensure we don't index out of bounds if corpus was smaller than top_k
+                if i < len(chunk_objs):
+                    chunk = chunk_objs[i]
+                    retrieved.append({
+                        "text": chunk.get("text", ""),
+                        "similarity": float(normalized_sims[i]), # Ensure standard float
+                        "docTitle": chunk.get("docTitle", ""),
+                        "chunkId": chunk.get("chunkId", ""),
+                    })
+
+            results[query] = retrieved
+        except Exception as e:
+             logger.error(f"Error processing query '{query}' with TF-IDF: {e}")
+             results[query] = [] # Return empty list for this specific query on error
+
     return results
 
 @RetrievalMethodRegistry.register("boolean")
@@ -1014,326 +925,868 @@ import faiss
 import numpy as np
 import os
 from langchain_community.vectorstores import FAISS
+from langchain_community.docstore.in_memory import InMemoryDocstore
+from langchain_core.documents import Document
+from langchain_core.embeddings import Embeddings # Import base class
+from typing import List # For type hinting
+# Assuming RetrievalMethodRegistry is defined elsewhere
+# Assuming logger is configured elsewhere, but we won't use it here
+
+# --- Define DummyEmbeddings Class ---
+class DummyEmbeddings(Embeddings):
+    """
+    A dummy embedding class implementing the LangChain Embeddings interface.
+    Used when pre-computed embeddings are provided to FAISS wrappers.
+    Returns zero vectors of the specified dimension.
+    """
+    def __init__(self, dimension: int):
+        self.dimension = dimension
+        if not isinstance(dimension, int) or dimension <= 0:
+             raise ValueError(f"Dimension must be a positive integer, got {dimension}")
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """Return zero vectors for a list of documents."""
+        return [[0.0] * self.dimension for _ in texts]
+
+    def embed_query(self, text: str) -> List[float]:
+        """Return a single zero vector for a query."""
+        return [0.0] * self.dimension
 
 @RetrievalMethodRegistry.register("faiss")
 def handle_faiss(chunk_objs, chunk_embeddings, queries, query_embeddings, settings):
     """
-    Retrieve chunks using LangChain FAISS for fast similarity search.
-    
-    Uses pre-computed embeddings instead of creating new ones.
-    Supports both creating a new FAISS index and loading an existing one.
+    Retrieve chunks using FAISS with explicit metric control (L2/IP) for MVP.
+    Supports creating a new index or loading an existing one.
+    Includes robustness improvements: DummyEmbeddings, dimension check, save path creation.
+    (Logging removed for brevity).
     """
     top_k = settings.get("top_k", 5)
+    user_requested_metric = settings.get("metric", "cosine").lower()
+    faiss_mode = settings.get("faissMode", "create").lower()
+    faiss_path = settings.get("faissPath", "") # Path to the FOLDER
     similarity_threshold = settings.get("similarity_threshold", 0) / 100
-    faiss_mode = settings.get("faissMode", "create")  # "create" or "load"
-    faiss_path = settings.get("faissPath", "")  # Path to FAISS index
-    faiss_metric = settings.get("metric", "l2")  # "l2" (default) or "ip"
 
-    # Convert embeddings to numpy arrays
-    chunk_embeddings = np.array(chunk_embeddings).astype('float32')
-    query_embeddings = np.array(query_embeddings).astype('float32')
+    # Basic Input Validation
+    if not chunk_objs or not chunk_embeddings:
+         # Consider raising an error or returning a structured error response
+         return {q: [] for q in queries}
+    if not queries or not query_embeddings:
+         # Consider raising an error or returning a structured error response
+         return {q: [] for q in queries}
 
-    # Step 1: Initialize LangChain FAISS Vector Store
+    try:
+        if not isinstance(chunk_embeddings[0], list) or not isinstance(query_embeddings[0], list):
+             raise TypeError("Embeddings should be lists of lists of floats.")
+        dimension = len(chunk_embeddings[0])
+        query_dimension = len(query_embeddings[0])
+    except (IndexError, TypeError) as e:
+         # Consider raising an error or returning a structured error response
+         # print(f"Error validating embedding structure: {e}") # Example direct print
+         return {q: [] for q in queries}
+
+    if dimension != query_dimension:
+         # Consider raising an error or returning a structured error response
+         # print(f"Embedding dimension mismatch: Chunks({dimension}), Queries({query_dimension})")
+         return {q: [] for q in queries}
+
+    chunk_embeddings_np = np.array(chunk_embeddings).astype('float32')
+    query_embeddings_np = np.array(query_embeddings).astype('float32')
+
+    try:
+        dummy_embeddings = DummyEmbeddings(dimension=dimension)
+    except ValueError as e:
+         # print(f"Failed to initialize DummyEmbeddings: {e}")
+         return {q: [] for q in queries}
+
+    vector_store = None
+    actual_metric = None
+
+    # === Step 1: Initialize LangChain FAISS Vector Store ===
     if faiss_mode == "load":
-        if not os.path.exists(faiss_path):
-            print(f"Error: FAISS index not found at {faiss_path}")
-            return {}
+        index_file = os.path.join(faiss_path, "index.faiss")
+        pkl_file = os.path.join(faiss_path, "index.pkl")
+        if not faiss_path or not os.path.exists(index_file) or not os.path.exists(pkl_file):
+            # print(f"FAISS index not found in folder '{faiss_path}'")
+            return {q: [] for q in queries}
 
         try:
-            # Dummy embedding function for loading
-            dummy_embeddings = lambda x: chunk_embeddings
-            vector_store = FAISS.load_local(faiss_path, dummy_embeddings, allow_dangerous_deserialization=True)
+            vector_store = FAISS.load_local(
+                folder_path=faiss_path,
+                embeddings=dummy_embeddings,
+                index_name="index",
+                allow_dangerous_deserialization=True
+            )
 
-            # Detect the metric type from the loaded index
-            metric_type = vector_store.index.metric_type
-            faiss_metric = "l2" if metric_type == faiss.METRIC_L2 else "ip"
-            print(f"Loaded FAISS index with metric: {faiss_metric}")
+            # Check Loaded Index Dimension
+            loaded_dimension = vector_store.index.d
+            if loaded_dimension != dimension:
+                 # print(f"Dimension mismatch: Loaded index({loaded_dimension}), Provided queries({dimension})")
+                 return {q: [] for q in queries}
+
+            # Determine the metric of the LOADED index
+            loaded_metric_type = vector_store.index.metric_type
+            if loaded_metric_type == faiss.METRIC_L2:
+                actual_metric = "l2"
+            elif loaded_metric_type == faiss.METRIC_INNER_PRODUCT:
+                actual_metric = "cosine"
+            else:
+                actual_metric = "l2" # Default fallback
+
+            # Informational check (no logger)
+            # if actual_metric != user_requested_metric:
+            #      print(f"Note: Loaded metric ('{actual_metric}') differs from requested ('{user_requested_metric}'). Using '{actual_metric}'.")
 
         except Exception as e:
-            print(f"Error loading FAISS index: {e}")
-            return {}
-    
+            # print(f"Error loading FAISS index from {faiss_path}: {e}")
+            return {q: [] for q in queries}
+
     elif faiss_mode == "create":
-        # Normalize embeddings if using Inner Product (IP) for cosine similarity
-        if faiss_metric == "ip":
-            faiss.normalize_L2(chunk_embeddings)
+        texts = [chunk.get("text", "") for chunk in chunk_objs]
+        metadatas = [{"docTitle": chunk.get("docTitle", ""), "chunkId": chunk.get("chunkId", str(i))} for i, chunk in enumerate(chunk_objs)]
 
-        # Create FAISS index
-        texts = [chunk["text"] for chunk in chunk_objs]
-        metadatas = [{"docTitle": chunk.get("docTitle", ""), "chunkId": chunk.get("chunkId", "")} for chunk in chunk_objs]
+        try:
+            if user_requested_metric in ["cosine", "ip"]:
+                actual_metric = "cosine"
+                faiss.normalize_L2(chunk_embeddings_np)
+                index = faiss.IndexFlatIP(dimension)
+            elif user_requested_metric == "l2":
+                actual_metric = "l2"
+                index = faiss.IndexFlatL2(dimension)
+            else:
+                actual_metric = "l2"
+                index = faiss.IndexFlatL2(dimension)
 
-        vector_store = FAISS.from_embeddings(
-            text_embeddings=zip(texts, chunk_embeddings),
-            embedding=None,  # No embedding model needed since we have embeddings
-            metadatas=metadatas
-        )
+            docstore = InMemoryDocstore({str(i): Document(page_content=texts[i], metadata=metadatas[i]) for i in range(len(texts))})
+            index_to_docstore_id = {i: str(i) for i in range(len(texts))}
 
-        # Save the FAISS index if path is provided
+            index.add(chunk_embeddings_np)
+
+            vector_store = FAISS(
+                embedding_function=dummy_embeddings,
+                index=index,
+                docstore=docstore,
+                index_to_docstore_id=index_to_docstore_id
+            )
+
+        except Exception as e:
+             # print(f"Error during index creation process: {e}")
+             return {q: [] for q in queries}
+
         if faiss_path:
-            vector_store.save_local(faiss_path)
+            try:
+                if not os.path.isdir(faiss_path):
+                     os.makedirs(faiss_path, exist_ok=True)
+                vector_store.save_local(folder_path=faiss_path, index_name="index")
+            except Exception as e:
+                 # print(f"Error saving FAISS index to {faiss_path}: {e}")
+                 # print("Continuing retrieval despite save failure.")
+                 pass # Continue even if saving fails
 
-    # Step 2: Perform FAISS Retrieval using pre-computed query embeddings
+    else:
+         # print(f"Invalid faissMode: '{faiss_mode}'. Must be 'create' or 'load'.")
+         return {q: [] for q in queries}
+
+    if not vector_store or not isinstance(vector_store, FAISS) or not actual_metric:
+         # print("Failed to initialize a valid FAISS vector store object.")
+         return {q: [] for q in queries}
+
+    # === Step 2: Perform FAISS Retrieval ===
     results = {}
+    for query, q_embedding in zip(queries, query_embeddings_np):
+        try:
+            query_vec = q_embedding.reshape(1, -1).astype('float32')
+            if actual_metric == "cosine":
+                faiss.normalize_L2(query_vec)
 
-    for query, q_embedding in zip(queries, query_embeddings):
-        # Normalize query embeddings if using Inner Product (IP)
-        if faiss_metric == "ip":
-            faiss.normalize_L2(q_embedding)
+            search_results = vector_store.similarity_search_with_score_by_vector(
+                embedding=query_vec[0],
+                k=top_k
+            )
 
-        # Reshape query embedding to 2D array as required by FAISS
-        q_embedding = q_embedding.reshape(1, -1)
-        
-        # Perform similarity search with pre-computed embedding
-        search_results = vector_store.similarity_search_with_score_by_vector(
-            embedding=q_embedding[0],  # Pass single embedding vector
-            k=top_k
-        )
+            # === Step 3: Convert results, apply threshold, and format ===
+            retrieved = []
+            for doc, score in search_results:
+                similarity_score = 0.0
+                if actual_metric == "l2":
+                    raw_score_l2 = float(score)
+                    similarity_score = 1.0 / (1.0 + raw_score_l2) if raw_score_l2 >= 0 else 1.0
+                elif actual_metric == "cosine":
+                    raw_score_cosine = float(score)
+                    similarity_score = max(0.0, min(1.0, raw_score_cosine))
+                # else: fallback similarity_score remains 0.0
 
-        # Step 3: Convert results into structured format
-        retrieved = []
-        for doc, score in search_results:
-            # Convert score based on FAISS metric
-            if faiss_metric == "l2":
-                similarity_score = 1 / (1 + float(score))  # Convert L2 distance to similarity
-            else:  # "ip"
-                similarity_score = float(score)  # Direct cosine similarity if normalized
+                if similarity_score >= similarity_threshold:
+                    retrieved.append({
+                        "text": doc.page_content,
+                        "similarity": round(similarity_score, 6),
+                        "docTitle": doc.metadata.get("docTitle", ""),
+                        "chunkId": doc.metadata.get("chunkId", ""),
+                    })
 
-            # Apply similarity threshold
-            if similarity_score >= similarity_threshold:
-                retrieved.append({
-                    "text": doc.page_content,
-                    "similarity": similarity_score,
-                    "docTitle": doc.metadata.get("docTitle", ""),
-                    "chunkId": doc.metadata.get("chunkId", ""),
-                })
+            retrieved.sort(key=lambda x: x["similarity"], reverse=True)
+            results[query] = retrieved
 
-        results[query] = retrieved
+        except Exception as e:
+            # print(f"Error during similarity search for query '{query[:70]}...': {e}")
+            results[query] = []
 
     return results
 
 @RetrievalMethodRegistry.register("pinecone")
 def handle_pinecone(chunk_objs, chunk_embeddings, queries, query_embeddings, settings):
     """
-    Retrieve chunks using Pinecone (no LangChain abstraction),
-    initialized via Pinecone(...) constructor, with debug prints
-    and fallback ID generation if chunkId is missing.
+    Retrieve chunks using Pinecone with adaptable behavior based on mode: create, load.
+    Includes smarter waiting based on index stats polling.
     """
     print("[DEBUG] Entered handle_pinecone function.")
-    
+
     from pinecone import Pinecone, ServerlessSpec
     import uuid
+    import time
 
     # 1. Extract settings
     top_k = settings.get("top_k", 5)
-    similarity_threshold = settings.get("similarity_threshold", 0) / 100
+    # Fix: Handle score interpretation based on metric during retrieval
+    similarity_function = settings.get("pineconeSimilarity", "cosine").lower() # Ensure lower case
+    # Fix: Make threshold make sense for metric, or maybe remove for MVP?
+    # Let's make threshold interpretation dependent on metric later in the code.
+    # Raw threshold value from settings:
+    raw_similarity_threshold = settings.get("similarity_threshold", 0) # Keep as is from settings for now
+
     pinecone_api_key = settings.get("pineconeApiKey", "")
     pinecone_env = settings.get("pineconeEnvironment", "us-east-1")
     pinecone_index_name = settings.get("pineconeIndex", "")
     pinecone_namespace = settings.get("pineconeNamespace", "")  # optional
-    similarity_function = settings.get("pineconeSimilarity", "cosine")
-    pinecone_mode = settings.get("pineconeMode", "create")  # "create", "load", "use"
+    pinecone_mode = settings.get("pineconeMode", "create")  # "create", "load"
+
+    # --- Smarter Wait Settings ---
+    polling_interval_seconds = settings.get("pineconePollingInterval", 3) # Check every 3 seconds
+    max_wait_time_seconds = settings.get("pineconeMaxWaitTime", 120) # Max wait 2 minutes
 
     print(f"[DEBUG] Pinecone settings extracted:")
     print(f"  top_k = {top_k}")
-    print(f"  similarity_threshold = {similarity_threshold}")
+    print(f"  raw_similarity_threshold = {raw_similarity_threshold}") # Log raw value
     print(f"  pinecone_api_key = {'(HIDDEN)' if pinecone_api_key else '(MISSING)'}")
     print(f"  pinecone_env = {pinecone_env}")
     print(f"  pinecone_index_name = {pinecone_index_name}")
     print(f"  pinecone_namespace = {pinecone_namespace}")
-    print(f"  similarity_function = {similarity_function}")
+    print(f"  similarity_function = {similarity_function}") # This IS used for index creation
     print(f"  pinecone_mode = {pinecone_mode}")
+    print(f"  polling_interval = {polling_interval_seconds}s, max_wait_time = {max_wait_time_seconds}s")
 
-    # Basic validation
+
     if not pinecone_api_key or not pinecone_index_name:
         print("[ERROR] Missing Pinecone API key or index name. Aborting.")
         return {q: [] for q in queries}
+    if not chunk_embeddings: # Check for empty embeddings early
+         print("[ERROR] chunk_embeddings list is empty. Aborting.")
+         return {q: [] for q in queries}
 
     # 2. Initialize Pinecone
     print("[DEBUG] Initializing Pinecone client...")
     pc = Pinecone(api_key=pinecone_api_key)
 
-    # 3. Check whether index exists
+    # 3. Check/Create Index
     print("[DEBUG] Checking existing Pinecone indexes...")
     existing_indexes_info = pc.list_indexes()
     existing_index_names = [idx["name"] for idx in existing_indexes_info]
-    
     index_exists = pinecone_index_name in existing_index_names
 
-    # Determine embedding dimension
-    dimension = len(chunk_embeddings[0]) if chunk_embeddings else 768  # Fallback
+    dimension = len(chunk_embeddings[0]) # Get dimension safely now
 
-    # Create or load the index
-    if pinecone_mode == "create" and not index_exists:
+    index = None # Initialize index variable
+
+    if pinecone_mode == "create":
+        if index_exists:
+            print(f"[DEBUG] Deleting existing Pinecone index '{pinecone_index_name}'...")
+            try:
+                pc.delete_index(pinecone_index_name)
+                 # Wait a bit after delete before creating again
+                print("[DEBUG] Waiting briefly after delete...")
+                time.sleep(5)
+            except Exception as e:
+                 print(f"[WARN] Failed to delete index '{pinecone_index_name}': {e}. Trying to create anyway.")
+
         print(f"[DEBUG] Creating Pinecone index '{pinecone_index_name}'...")
         try:
             pc.create_index(
                 name=pinecone_index_name,
                 dimension=dimension,
-                metric=similarity_function,
+                metric=similarity_function, # Correctly uses user's metric choice
                 spec=ServerlessSpec(cloud="aws", region=pinecone_env)
             )
-            print(f"[DEBUG] Index '{pinecone_index_name}' created successfully.")
+            # Wait a moment for index to initialize after creation
+            print("[DEBUG] Index creation initiated. Waiting briefly...")
+            time.sleep(10)
+            print(f"[DEBUG] Index '{pinecone_index_name}' created/ready.")
+            index = pc.Index(name=pinecone_index_name)
+            upsert_chunks = True
         except Exception as e:
-            print(f"[ERROR] Failed to create index: {e}")
+            print(f"[ERROR] Failed to create index '{pinecone_index_name}': {e}. Aborting.")
             return {q: [] for q in queries}
 
-    elif pinecone_mode in ("load", "use") and not index_exists:
-        print(f"[ERROR] Index '{pinecone_index_name}' does not exist. Aborting.")
-        return {q: [] for q in queries}
+    elif pinecone_mode == "load":
+        if not index_exists:
+            print(f"[ERROR] Index '{pinecone_index_name}' does not exist. Cannot load. Aborting.")
+            return {q: [] for q in queries}
+        print(f"[DEBUG] Connecting to existing Pinecone index '{pinecone_index_name}'...")
+        index = pc.Index(name=pinecone_index_name)
+        # Check index dimension matches data
+        try:
+             stats = index.describe_index_stats()
+             if stats.dimension != dimension:
+                  print(f"[ERROR] Dimension mismatch: Index '{pinecone_index_name}' has dimension {stats.dimension}, but provided data has dimension {dimension}. Aborting.")
+                  return {q: [] for q in queries}
+             print(f"[DEBUG] Connected. Index dimension {stats.dimension} matches data.")
+        except Exception as e:
+             print(f"[WARN] Could not verify index dimension for '{pinecone_index_name}': {e}")
+        upsert_chunks = True # Still upserting in load mode as per original logic
+                           # Consider adding a 'connect_only' mode if needed
 
-    # Connect to the index
-    print("[DEBUG] Connecting to the Pinecone index...")
-    index = pc.Index(name=pinecone_index_name)
+    else:
+         print(f"[ERROR] Invalid pineconeMode '{pinecone_mode}'. Use 'create' or 'load'. Aborting.")
+         return {q: [] for q in queries}
 
-    # Supposons que chunk_embeddings soit une liste de listes (ou np.array) de shape (num_chunks, embedding_dim)
-    print("[DEBUG] Première dimension de chunk_embeddings :", len(chunk_embeddings[0]))
-    # Même chose pour les queries
-    print("[DEBUG] Première dimension de query_embeddings :", len(query_embeddings[0]))
-
-
-    # Upsert embeddings if in "create" mode
-    if pinecone_mode == "create":
+    # Upsert embeddings if needed
+    if upsert_chunks and index:
         print("[DEBUG] Preparing vectors to upsert...")
         vectors_to_upsert = []
         for chunk, embedding in zip(chunk_objs, chunk_embeddings):
-            vector_id = chunk.get("chunkId", str(uuid.uuid4()))
+            vector_id = chunk.get("chunkId", str(uuid.uuid4())) # Ensure unique IDs
             metadata = {
                 "text": chunk.get("text", ""),
                 "docTitle": chunk.get("docTitle", ""),
-                "chunkId": vector_id,
+                "chunkId": vector_id, # Store the ID in metadata too if needed
             }
-            vectors_to_upsert.append((vector_id, embedding, metadata))
+            # Ensure embedding is a list of floats
+            embedding_list = [float(x) for x in embedding]
+            vectors_to_upsert.append((vector_id, embedding_list, metadata))
 
         if vectors_to_upsert:
+            num_to_upsert = len(vectors_to_upsert)
+            print(f"[DEBUG] Getting initial vector count in namespace '{pinecone_namespace}'...")
+            initial_count = 0
             try:
-                print(f"[DEBUG] Upserting {len(vectors_to_upsert)} vectors into Pinecone...")
-                index.upsert(vectors=vectors_to_upsert, namespace=pinecone_namespace)
-                print("[DEBUG] Upsert completed successfully.")
+                initial_stats = index.describe_index_stats()
+                initial_count = initial_stats.namespaces.get(pinecone_namespace, {}).get('vector_count', 0)
+                print(f"[DEBUG] Initial vector count: {initial_count}")
             except Exception as e:
-                print(f"[ERROR] Failed to upsert vectors: {e}")
-                return {q: [] for q in queries}
+                print(f"[WARN] Could not get initial vector count: {e}. Assuming 0.")
 
-    # 5. Query / Retrieval
+            expected_count = initial_count + num_to_upsert # Approximate target
+
+            print(f"[DEBUG] Upserting {num_to_upsert} vectors into namespace '{pinecone_namespace}'...")
+            try:
+                # Upsert in batches for larger datasets if necessary (Pinecone handles batching internally to some extent)
+                # For very large upserts (> few MB), consider batching client-side too.
+                index.upsert(vectors=vectors_to_upsert, namespace=pinecone_namespace)
+                print("[DEBUG] Upsert call completed.")
+
+                print(f"[DEBUG] Polling index stats (every {polling_interval_seconds}s, max {max_wait_time_seconds}s) waiting for vector count to reach >= {expected_count}...")
+                start_time = time.time()
+                while True:
+                    elapsed_time = time.time() - start_time
+                    if elapsed_time > max_wait_time_seconds:
+                        print(f"[WARN] Max wait time ({max_wait_time_seconds}s) exceeded while polling index stats. Proceeding anyway.")
+                        break
+                    try:
+                        current_stats = index.describe_index_stats()
+                        current_count = current_stats.namespaces.get(pinecone_namespace, {}).get('vector_count', 0)
+                        print(f"[DEBUG] Polling: Current count = {current_count}, Target = {expected_count}, Time elapsed = {elapsed_time:.1f}s")
+
+                        # Check if count is sufficient. >= handles potential overwrites where count might not increase exactly by num_to_upsert
+                        if current_count >= expected_count:
+                            print(f"[DEBUG] Target vector count reached ({current_count} >= {expected_count}). Index likely ready.")
+                            break
+                        # Handle edge case: If initial count was already >= expected (e.g., re-upserting same data)
+                        if current_count >= initial_count and num_to_upsert > 0 and initial_count == expected_count:
+                             print("[DEBUG] Count hasn't changed but was non-zero initially. Assuming upsert modified existing vectors.")
+                             break
+
+
+                    except Exception as e:
+                        print(f"[WARN] Error polling index stats: {e}. Retrying...")
+
+                    time.sleep(polling_interval_seconds)
+                # Add a tiny final buffer sleep just in case? Optional.
+                # time.sleep(1)
+                print("[DEBUG] Finished waiting/polling.")
+                # --- End Smarter Wait Logic ---
+
+            except Exception as e:
+                 print(f"[ERROR] Failed during upsert or polling: {e}")
+                 # Decide if you want to proceed or abort if upsert/wait fails
+                 return {q: [] for q in queries}
+        else:
+            print("[DEBUG] No vectors prepared to upsert.")
+
+    # Query / Retrieval
     print("[DEBUG] Starting retrieval for queries...")
     results = {}
+    if not index:
+        print("[ERROR] Index object is not valid. Cannot perform retrieval.")
+        return {q: [] for q in queries}
+
     for query, query_emb in zip(queries, query_embeddings):
-        print(f"[DEBUG] Processing query: '{query}'")
+        query_short = query[:70] + "..." if len(query) > 70 else query
+        print(f"[DEBUG] Processing query: '{query_short}'")
         try:
-            # Convert embedding to list if necessary (Pinecone expects a list of floats)
-            q_emb_list = list(query_emb)
-            
-            # Query the index
+            # Ensure query embedding is a list of floats
+            query_emb_list = [float(x) for x in query_emb]
+
             pinecone_response = index.query(
                 namespace=pinecone_namespace,
-                vector=q_emb_list,
+                vector=query_emb_list,
                 top_k=top_k,
                 include_metadata=True
             )
-            print("AAA")
-            print(pinecone_response)
-            
-            # Process matches
+
+            # --- Fix Score Interpretation and Thresholding ---
             retrieved_chunks = []
-            for match_idx, match in enumerate(pinecone_response.get("matches", [])):
-                sim_score = match["score"]
-                if sim_score >= similarity_threshold:
-                    md = match.get("metadata", {}) or {}
-                    chunk_info = {
-                        "text": md.get("text", ""),
-                        "docTitle": md.get("docTitle", ""),
-                        "chunkId": md.get("chunkId", ""),
-                        "similarity": sim_score
-                    }
-                    retrieved_chunks.append(chunk_info)
+            print(f"[DEBUG] Raw Pinecone response matches for query '{query_short}': {len(pinecone_response.get('matches', []))}")
+            for match in pinecone_response.get("matches", []):
+                score = match["score"]
+                metadata = match.get("metadata", {})
+                chunk_text = metadata.get("text", "")
+                doc_title = metadata.get("docTitle", "")
+                chunk_id = metadata.get("chunkId", match.id) # Fallback to match ID if not in metadata
+
+                passes_threshold = False
+                similarity_score_for_output = score # Default to raw score
+
+                if similarity_function == "euclidean":
+                     # Lower score (distance) is better. Threshold is max distance.
+                     # Let's assume raw_similarity_threshold is meant as max distance here.
+                     # A threshold of 0 for distance is impossible unless vectors are identical.
+                     # Maybe skip thresholding for euclidean for MVP if threshold meaning is unclear?
+                     # Or, convert distance to a similarity score first? 1 / (1 + distance)
+                     similarity_score_for_output = 1.0 / (1.0 + score) if score >= 0 else 1.0
+                     # Now apply the threshold (interpreted as min similarity) to the converted score
+                     passes_threshold = (similarity_score_for_output >= (raw_similarity_threshold / 100.0))
+                     print(f"  Match(euclidean): ID={chunk_id}, Dist={score:.4f}, Sim={similarity_score_for_output:.4f}, Threshold={raw_similarity_threshold/100.0}, Passes={passes_threshold}")
+
+                elif similarity_function == "cosine":
+                     # Higher score is better. Threshold is min similarity.
+                     similarity_score_for_output = max(0.0, min(1.0, score)) # Clamp [0, 1]
+                     passes_threshold = (similarity_score_for_output >= (raw_similarity_threshold / 100.0))
+                     print(f"  Match(cosine): ID={chunk_id}, Score={score:.4f}, Sim={similarity_score_for_output:.4f}, Threshold={raw_similarity_threshold/100.0}, Passes={passes_threshold}")
+
+                elif similarity_function == "dotproduct":
+                     # Higher score is better. Threshold could be anything.
+                     # Dot product isn't easily normalized to [0,1]. Thresholding is tricky.
+                     # For MVP, maybe just skip thresholding for dotproduct or require user to know appropriate range.
+                     # Let's apply the raw threshold directly, assuming user knows the scale.
+                     similarity_score_for_output = score # Keep raw score
+                     passes_threshold = (score >= raw_similarity_threshold) # Compare raw score to raw threshold
+                     print(f"  Match(dotproduct): ID={chunk_id}, Score={score:.4f}, RawThreshold={raw_similarity_threshold}, Passes={passes_threshold}")
                 else:
-                    print(f"[DEBUG] Match #{match_idx+1} below threshold ({sim_score} < {similarity_threshold}), skipping.")
-            
+                     # Unknown metric
+                     print(f"[WARN] Unknown similarity function '{similarity_function}' encountered during score interpretation.")
+                     passes_threshold = True # Default to passing if metric is unknown? Or False? Let's pass.
+
+                if passes_threshold:
+                     retrieved_chunks.append({
+                         "text": chunk_text,
+                         "docTitle": doc_title,
+                         "chunkId": chunk_id,
+                         "similarity": similarity_score_for_output # Use the potentially converted score
+                     })
+                # else: Skip results not meeting the threshold/distance criteria (already logged above)
+
+            # Sort final results if needed (Pinecone usually returns sorted, but doesn't hurt)
+            # Make sure sorting key matches the similarity interpretation
+            sort_reverse = (similarity_function != "euclidean") # Sort descending for cosine/dotproduct, ascending for raw euclidean dist if you kept it
+            # Since we convert euclidean to similarity, always sort descending by 'similarity' field
+            retrieved_chunks.sort(key=lambda x: x["similarity"], reverse=True)
+
             results[query] = retrieved_chunks
-            print(f"[DEBUG] Retrieved {len(retrieved_chunks)} chunks for query: '{query}'")
+            print(f"[DEBUG] Retrieved {len(retrieved_chunks)} chunks for query: '{query_short}' after filtering/thresholding.")
         except Exception as e:
-            print(f"[ERROR] Failed to process query '{query}': {e}")
+            print(f"[ERROR] Failed to process query '{query_short}': {e}")
             results[query] = []
 
     print("[DEBUG] Retrieval completed.")
     return results
 
+# Add near other imports at the top
 import chromadb
-import numpy as np
+from chromadb.utils import embedding_functions
+import uuid # For generating fallback IDs
 
-def handle_chroma(chunk_objs, chunk_embeddings, queries, query_embeddings, settings):
+# Define the DummyEmbeddings class if it's not already globally available
+# (Assuming it's defined similarly to the handle_faiss implementation)
+from langchain_core.embeddings import Embeddings
+from typing import List
+class DummyEmbeddings(Embeddings):
     """
-    Retrieve chunks using Chroma DB Vector Store.
+    A dummy embedding class implementing the LangChain Embeddings interface.
+    Used when pre-computed embeddings are provided.
+    Returns zero vectors of the specified dimension.
+    """
+    def __init__(self, dimension: int):
+        self.dimension = dimension
+        if not isinstance(dimension, int) or dimension <= 0:
+             raise ValueError(f"Dimension must be a positive integer, got {dimension}")
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """Return zero vectors for a list of documents."""
+        # print(f"[DummyEmbeddings] embed_documents called for {len(texts)} texts. Returning zeros.") # Debug print
+        return [[0.0] * self.dimension for _ in texts]
+
+    def embed_query(self, text: str) -> List[float]:
+        """Return a single zero vector for a query."""
+        # print(f"[DummyEmbeddings] embed_query called for text: '{text[:50]}...'. Returning zeros.") # Debug print
+        return [0.0] * self.dimension
+
+@RetrievalMethodRegistry.register("chromadb")
+def handle_chromadb(chunk_objs, chunk_embeddings, queries, query_embeddings, settings):
+    """
+    Retrieve chunks using Chroma DB Vector Store with precomputed embeddings.
+    Supports in-memory or persistent storage and cosine/l2 metrics.
+    """
+    print("[ChromaDB] Starting retrieval with Chroma...", flush=True)
+
+    # === Step 1: Extract Settings ===
+    chroma_mode = settings.get("chromaMode", "memory").lower()  # "memory" or "persistent"
+    chroma_path = settings.get("chromaPersistDir", "./chroma_db") # Default path if persistent
+    collection_name = settings.get("chromaCollection", f"collection_{uuid.uuid4().hex[:8]}") # Default unique name
+    # Chroma default is L2, let's allow specifying, default to cosine for consistency
+    # Chroma uses 'l2', 'cosine', 'ip' (inner product)
+    distance_metric = settings.get("chromaDistanceMetric", "cosine").lower()
+    top_k = settings.get("top_k", 5)
+    # similarity_threshold is 0-100 in settings, convert to 0-1
+    similarity_threshold = settings.get("similarity_threshold", 0) / 100.0
+    # Add a setting to control cleanup on create mode
+    cleanup_on_create = settings.get("chromaCleanupOnCreate", True)
+
+    print(f"[ChromaDB] Mode: {chroma_mode}", flush=True)
+    print(f"[ChromaDB] Top K: {top_k}", flush=True)
+    print(f"[ChromaDB] Similarity threshold: {similarity_threshold}", flush=True)
+    print(f"[ChromaDB] Collection: {collection_name}", flush=True)
+    print(f"[ChromaDB] Metric: {distance_metric}", flush=True)
+    if chroma_mode == "persistent":
+        print(f"[ChromaDB] Persistence path: {chroma_path}", flush=True)
+    print(f"[ChromaDB] Cleanup on create: {cleanup_on_create}", flush=True)
+
+    # === Basic Input Validation ===
+    if not chunk_objs or not chunk_embeddings:
+         print("[ChromaDB ERROR] No chunk objects or chunk embeddings provided.", flush=True)
+         return {q: [] for q in queries}
+    if not queries or not query_embeddings:
+         print("[ChromaDB ERROR] No queries or query embeddings provided.", flush=True)
+         return {q: [] for q in queries}
+
+    try:
+        if not isinstance(chunk_embeddings[0], list) or not isinstance(query_embeddings[0], list):
+             raise TypeError("Embeddings should be lists of lists of floats.")
+        dimension = len(chunk_embeddings[0])
+        query_dimension = len(query_embeddings[0])
+        if dimension == 0:
+            raise ValueError("Chunk embedding dimension cannot be zero.")
+        if query_dimension == 0:
+             raise ValueError("Query embedding dimension cannot be zero.")
+    except (IndexError, TypeError, ValueError) as e:
+         print(f"[ChromaDB ERROR] Invalid embedding structure or dimension: {e}", flush=True)
+         return {q: [] for q in queries}
+
+    if dimension != query_dimension:
+         print(f"[ChromaDB ERROR] Embedding dimension mismatch: Chunks({dimension}), Queries({query_dimension})", flush=True)
+         return {q: [] for q in queries}
+
+    # === Step 2: Initialize Chroma Client ===
+    try:
+        print(f"[ChromaDB] Initializing Chroma client (Mode: {chroma_mode})...", flush=True)
+        if chroma_mode == "persistent":
+            # Ensure the directory exists for persistent client
+            if not os.path.exists(chroma_path):
+                 print(f"[ChromaDB] Creating persistence directory: {chroma_path}", flush=True)
+                 os.makedirs(chroma_path, exist_ok=True)
+            chroma_client = chromadb.PersistentClient(path=chroma_path)
+        else: # memory mode
+            chroma_client = chromadb.Client()
+        print("[ChromaDB] Chroma client initialized.", flush=True)
+
+        # === Step 3: Get or Create Collection ===
+        print(f"[ChromaDB] Accessing collection: '{collection_name}'", flush=True)
+
+        # Handle cleanup if in create mode and collection exists
+        if chroma_mode == "create" and cleanup_on_create:
+             try:
+                 existing_collections = [col.name for col in chroma_client.list_collections()]
+                 if collection_name in existing_collections:
+                      print(f"[ChromaDB] 'create' mode: Deleting existing collection '{collection_name}'...", flush=True)
+                      chroma_client.delete_collection(name=collection_name)
+                      print(f"[ChromaDB] Collection '{collection_name}' deleted.", flush=True)
+                 else:
+                      print(f"[ChromaDB] 'create' mode: Collection '{collection_name}' does not exist, no need to delete.", flush=True)
+             except Exception as e:
+                  print(f"[ChromaDB WARN] Failed to delete collection '{collection_name}' during cleanup: {e}. Proceeding...", flush=True)
+
+
+        # Define metric for the collection (only possible at creation)
+        # Use Chroma's constants for metadata keys if available, otherwise string
+        # Note: distance_metric from settings should match Chroma's options ('l2', 'cosine', 'ip')
+        if distance_metric not in ['l2', 'cosine', 'ip']:
+            print(f"[ChromaDB WARN] Invalid distance metric '{distance_metric}'. Defaulting to 'cosine'.", flush=True)
+            distance_metric = 'cosine'
+
+        collection_metadata = {"hnsw:space": distance_metric}
+
+        print(f"[ChromaDB] Getting or creating collection '{collection_name}' with metric '{distance_metric}'...", flush=True)
+        collection = chroma_client.get_or_create_collection(
+            name=collection_name,
+            metadata=collection_metadata # Set metric here
+            # embedding_function=embedding_functions.DefaultEmbeddingFunction() # Optional: Chroma can manage its own embeddings if needed, but we provide them
+        )
+        print(f"[ChromaDB] Collection '{collection_name}' ready.", flush=True)
+
+        # === Step 4: Add/Upsert Data ===
+        # Decide whether to add or upsert based on mode or specific setting if added later
+        # For now, let's use upsert as it's generally safer and handles both create/load scenarios.
+        print(f"[ChromaDB] Preparing {len(chunk_objs)} items for upsert...", flush=True)
+        ids = []
+        embeddings_to_add = []
+        metadatas_to_add = []
+        documents_to_add = [] # Chroma requires text content ('documents')
+
+        for i, chunk in enumerate(chunk_objs):
+            chunk_id = chunk.get("chunkId")
+            # Ensure a unique, non-empty string ID
+            if not chunk_id or not isinstance(chunk_id, str) or len(chunk_id.strip()) == 0:
+                 chunk_id = f"chunk_{i}_{uuid.uuid4().hex[:8]}"
+                 # print(f"[ChromaDB WARN] Generated fallback ID: {chunk_id} for chunk index {i}", flush=True)
+
+            ids.append(chunk_id)
+            # Ensure embeddings are lists of standard floats
+            embeddings_to_add.append([float(e) for e in chunk_embeddings[i]])
+            metadatas_to_add.append({
+                "docTitle": chunk.get("docTitle", ""),
+                "chunkId": chunk_id # Store original/generated ID in metadata too
+                # Add any other relevant metadata from chunk_obj if needed
+            })
+            documents_to_add.append(chunk.get("text", "")) # Add the text content
+
+        if ids:
+            print(f"[ChromaDB] Upserting {len(ids)} items into collection '{collection_name}'...", flush=True)
+            # Upsert handles adding new and updating existing IDs
+            collection.upsert(
+                ids=ids,
+                embeddings=embeddings_to_add,
+                metadatas=metadatas_to_add,
+                documents=documents_to_add
+            )
+            print("[ChromaDB] Upsert operation completed.", flush=True)
+            # Optional: Add a small delay if needed, though upsert is usually synchronous
+            # time.sleep(1)
+        else:
+             print("[ChromaDB] No items to upsert.", flush=True)
+
+
+        # === Step 5: Perform Retrieval ===
+        print("[ChromaDB] Starting retrieval for queries...", flush=True)
+        results = {}
+
+        for query, q_embedding in zip(queries, query_embeddings):
+            query_short = query[:70] + "..." if len(query) > 70 else query
+            print(f"[ChromaDB] Processing query: '{query_short}'", flush=True)
+
+            try:
+                # Ensure query embedding is list of floats
+                query_embedding_float = [float(e) for e in q_embedding]
+
+                # Use collection.query
+                query_results = collection.query(
+                    query_embeddings=[query_embedding_float], # Query expects a list of embeddings
+                    n_results=top_k,
+                    include=['metadatas', 'documents', 'distances'] # Request distances
+                )
+
+                # === Step 6: Process and Format Results ===
+                retrieved = []
+                # query_results structure: {'ids': [[id1,..]], 'documents': [[doc1,..]], 'metadatas': [[meta1,..]], 'distances': [[dist1,..]]}
+                # Since we query one vector at a time, we access the first element of each list
+                if query_results and query_results.get('ids') and query_results['ids'][0]:
+                    num_results = len(query_results['ids'][0])
+                    print(f"[ChromaDB] Query returned {num_results} raw results.", flush=True)
+
+                    for i in range(num_results):
+                        distance = query_results['distances'][0][i]
+                        metadata = query_results['metadatas'][0][i]
+                        doc_text = query_results['documents'][0][i]
+                        result_id = query_results['ids'][0][i]
+
+                        # Convert distance to similarity score (0 to 1, higher is better)
+                        similarity_score = 0.0
+                        if distance_metric == 'cosine':
+                            # Cosine distance = 1 - cosine similarity
+                            # similarity = 1 - distance
+                            # Clamp between 0 and 1, as distance can theoretically be > 1 slightly due to float errors, or < 0 if metric='ip'
+                            similarity_score = max(0.0, min(1.0, 1.0 - float(distance)))
+                        elif distance_metric == 'l2':
+                            # L2 distance is >= 0. Lower is better.
+                            # Convert to similarity: 1 / (1 + distance) -> maps [0, inf) to (0, 1]
+                            similarity_score = 1.0 / (1.0 + float(distance))
+                        elif distance_metric == 'ip':
+                             # Inner product: higher is better. Can be negative.
+                             # No standard way to normalize IP to [0, 1] without knowing the range.
+                             # Let's pass the raw score, but warn user. Or maybe try simple scaling?
+                             # For now, just clamp positive values? Or return raw? Let's clamp [0,1] after possible normalization.
+                             # Simple approach: If embeddings are normalized, IP is cosine sim. Assume user normalized if using IP.
+                             similarity_score = max(0.0, min(1.0, float(distance))) # Treat like cosine if normalized
+                             # print(f"[ChromaDB WARN] Inner Product metric used. Assuming normalized embeddings. Score={distance}, Similarity={similarity_score}", flush=True)
+
+                        # Apply threshold
+                        if similarity_score >= similarity_threshold:
+                            retrieved.append({
+                                "text": doc_text,
+                                "similarity": round(similarity_score, 6), # Use calculated similarity
+                                "docTitle": metadata.get("docTitle", ""),
+                                # Use chunkId from metadata if available, else the result ID
+                                "chunkId": metadata.get("chunkId", result_id),
+                                # Optionally include raw distance for debugging:
+                                # "raw_distance": float(distance),
+                                # "metric": distance_metric
+                            })
+                        else:
+                            print(f"[ChromaDB] Result {result_id} skipped due to threshold (Sim: {similarity_score:.4f} < Threshold: {similarity_threshold:.4f})", flush=True)
+
+                    # Sort by similarity score descending (highest first)
+                    retrieved.sort(key=lambda x: x["similarity"], reverse=True)
+
+                    # Ensure we only return top_k results *after* filtering
+                    retrieved = retrieved[:top_k]
+
+                    results[query] = retrieved
+                    print(f"[ChromaDB] Retrieved {len(retrieved)} chunks for query '{query_short}' after filtering/sorting.", flush=True)
+                else:
+                    print(f"[ChromaDB] No results returned from Chroma query for '{query_short}'.", flush=True)
+                    results[query] = []
+
+            except Exception as e:
+                print(f"[ChromaDB ERROR] Failed during query or result processing for query '{query_short}': {e}", flush=True)
+                # Add traceback for debugging if needed
+                # import traceback
+                # traceback.print_exc()
+                results[query] = [] # Return empty list for this query on error
+
+    except Exception as e:
+        print(f"[ChromaDB FATAL ERROR] Failed during client/collection setup or upsert: {e}", flush=True)
+        # import traceback
+        # traceback.print_exc()
+        # Return empty results for all queries if setup failed
+        results = {q: [] for q in queries}
+
+    print("[ChromaDB] Retrieval process finished.", flush=True)
+    return results
+
+from azure.cosmos import CosmosClient, PartitionKey
+import numpy as np
+import uuid
+import time
+
+@RetrievalMethodRegistry.register("cosmosdb")
+def handle_cosmosdb(chunk_objs, chunk_embeddings, queries, query_embeddings, settings):
+    """
+    Retrieve chunks using Cosmos DB Vector Store.
 
     Args:
-        chunk_objs (list): List of dicts with chunk data (e.g., {"text": str, "chunkId": str, "docTitle": str}).
-        chunk_embeddings (list): List of embeddings for chunks (NumPy arrays or lists).
+        chunk_objs (list): List of dicts with chunk data.
+        chunk_embeddings (list): List of chunk embedding vectors.
         queries (list): List of query strings.
-        query_embeddings (list): List of embeddings for queries (NumPy arrays or lists).
-        settings (dict): Configuration settings (e.g., collection_name, metric, chroma_mode).
+        query_embeddings (list): List of query embedding vectors.
+        settings (dict): Configuration settings.
 
     Returns:
-        dict: Mapping of query strings to lists of retrieved chunk dictionaries.
+        dict: Mapping of query strings to retrieved results.
     """
-    # Extract settings with defaults
-    collection_name = settings.get("chromaCollection", "default_collection")
-    metric = settings.get("metric", "cosine")  # Options: "cosine", "l2", "ip"
-    chroma_mode = settings.get("chromaMode", "create")  # Options: "create", "use"
+
+    # === Extract settings ===
+    cosmos_mode = settings.get("cosmosMode", "create")
+    endpoint = settings.get("cosmosEndpoint")
+    key = settings.get("cosmosKey")
+    database_name = settings.get("cosmosDatabase", "VectorDB")
+    container_name = settings.get("cosmosContainer", "Chunks")
     top_k = settings.get("top_k", 5)
     similarity_threshold = settings.get("similarity_threshold", 0) / 100
 
-    # Initialize in-memory Chroma client
-    client = chromadb.Client()
+    # === Step 1: Init Cosmos Client ===
+    print("[CosmosDB] Connecting to Cosmos DB...")
+    client = CosmosClient(endpoint, credential=key)
+    db = client.create_database_if_not_exists(id=database_name)
+    container = db.create_container_if_not_exists(
+        id=container_name,
+        partition_key=PartitionKey(path="/chunkId"),
+        offer_throughput=400
+    )
 
-    # Handle collection based on mode
-    if chroma_mode == "create":
-        # Get or create collection
-        collection = client.get_or_create_collection(name=collection_name, distance_metric=metric)
-        # Prepare data for upsert
-        ids = [str(chunk["chunkId"]) for chunk in chunk_objs]
-        embeddings = [emb.tolist() if isinstance(emb, np.ndarray) else emb for emb in chunk_embeddings]
-        metadatas = [{"text": chunk["text"], "docTitle": chunk.get("docTitle", "")} for chunk in chunk_objs]
-        # Upsert vectors into collection
-        collection.upsert(ids=ids, embeddings=embeddings, metadatas=metadatas)
-    elif chroma_mode == "use":
-        # Get existing collection
-        try:
-            collection = client.get_collection(name=collection_name)
-        except Exception as e:
-            print(f"[ERROR] Collection '{collection_name}' does not exist: {e}")
-            return {q: [] for q in queries}
-    else:
-        print(f"[ERROR] Invalid chroma_mode '{chroma_mode}'. Must be 'create' or 'use'.")
-        return {q: [] for q in queries}
+    dimension = len(chunk_embeddings[0])
+    print(f"[CosmosDB] Vector dimension: {dimension}")
+    print(f"[CosmosDB] Mode: {cosmos_mode}")
 
-    # Perform similarity search for each query
+    # === Step 2: Create or Load Embeddings ===
+    if cosmos_mode == "create":
+        print(f"[CosmosDB] Inserting {len(chunk_objs)} vectors...")
+        for chunk, embedding in zip(chunk_objs, chunk_embeddings):
+            try:
+                item = {
+                    "id": chunk.get("chunkId", str(uuid.uuid4())),
+                    "chunkId": chunk.get("chunkId", str(uuid.uuid4())),
+                    "text": chunk.get("text", ""),
+                    "docTitle": chunk.get("docTitle", ""),
+                    "embedding": embedding
+                }
+                container.upsert_item(item)
+            except Exception as e:
+                print(f"[CosmosDB ERROR] Failed to upsert item: {e}")
+        print("[CosmosDB] Upsert complete. Waiting 10s for indexing...")
+        time.sleep(10)
+
+    # === Step 3: Perform Retrieval ===
+    print("[CosmosDB] Starting retrieval...")
     results = {}
-    for query, query_emb in zip(queries, query_embeddings):
-        # Convert query embedding to list if necessary
-        if isinstance(query_emb, np.ndarray):
-            query_emb = query_emb.tolist()
-        # Query the collection
-        query_results = collection.query(query_embeddings=[query_emb], n_results=top_k)
-        # Process results
-        retrieved = []
-        for id, distance, metadata in zip(query_results["ids"][0], query_results["distances"][0], query_results["metadatas"][0]):
-            # Calculate similarity based on metric
-            if metric == "l2":
-                similarity = 1 / (1 + distance)  # Transform L2 distance to similarity
-            elif metric == "cosine":
-                similarity = 1 - distance  # Cosine distance to cosine similarity
-            elif metric == "ip":
-                similarity = -distance  # Distance is -dot product, so negate to get dot product
-            if similarity >= similarity_threshold:
-                retrieved.append({
-                    "text": metadata["text"],
-                    "similarity": float(similarity),
-                    "docTitle": metadata.get("docTitle", ""),
-                    "chunkId": id
-                })
-        results[query] = retrieved
 
+    for query, q_embedding in zip(queries, query_embeddings):
+        print(f"[CosmosDB] Query: '{query}'")
+
+        vector_query = {
+            "vector": q_embedding,
+            "topK": top_k,
+            "fields": "embedding",
+            "numCandidates": 100,
+            "metric": "cosine"
+        }
+
+        try:
+            vector_sql = {
+                "query": "SELECT * FROM c WHERE IS_VECTOR_SEARCHABLE(c.embedding)",
+                "vectorSearch": vector_query
+            }
+
+            response = container.query_items(
+                query=vector_sql,
+                enable_cross_partition_query=True
+            )
+
+            retrieved = []
+            for item in response:
+                score = item.get("_vectorScore", 0)
+                if score >= similarity_threshold:
+                    retrieved.append({
+                        "text": item.get("text", ""),
+                        "docTitle": item.get("docTitle", ""),
+                        "chunkId": item.get("chunkId", ""),
+                        "similarity": float(score)
+                    })
+
+            results[query] = retrieved
+            print(f"[CosmosDB] Retrieved {len(retrieved)} chunks for query.")
+
+        except Exception as e:
+            print(f"[CosmosDB ERROR] Failed on query '{query}': {e}")
+            results[query] = []
+
+    print("[CosmosDB] Retrieval complete.")
     return results
-
 
 
 @app.route("/retrieve", methods=["POST"])

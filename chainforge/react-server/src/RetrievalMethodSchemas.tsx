@@ -53,6 +53,13 @@ export const BM25Schema: ModelSettingsDict = {
     type: "object",
     required: ["top_k", "bm25_k1", "bm25_b"],
     properties: {
+      shortName: {
+        type: "string",
+        default: "BM25 Retrieval",
+        title: "Nickname",
+        description:
+          "Unique identifier to appear in ChainForge. Keep it short.",
+      },
       top_k: {
         type: "number",
         default: 5,
@@ -71,6 +78,12 @@ export const BM25Schema: ModelSettingsDict = {
     },
   },
   uiSchema: {
+    shortName: {
+      "ui:widget": "text",
+      "ui:options": {
+        placeholder: "Custom name for your retrieval method",
+      },
+    },
     top_k: {
       "ui:widget": "range",
       "ui:options": {
@@ -109,24 +122,36 @@ export const TFIDFSchema: ModelSettingsDict = {
     type: "object",
     required: ["top_k", "max_features"],
     properties: {
+      shortName: {
+        type: "string",
+        default: "TF-IDF Retrieval",
+        title: "Nickname",
+        description:
+          "Unique identifier to appear in ChainForge. Keep it short.",
+      },
       top_k: {
         type: "number",
-        default: 5,
         title: "Top K Results",
       },
       max_features: {
         type: "number",
+        title: "Max Features (Vocabulary Size)", // Clarified title
         default: 500,
-        title: "Max Features",
       },
     },
   },
   uiSchema: {
+    shortName: {
+      "ui:widget": "text",
+      "ui:options": {
+        placeholder: "Custom name for your retrieval method",
+      },
+    },
     top_k: {
       "ui:widget": "range",
       "ui:options": {
         min: 1,
-        max: 20,
+        max: 50, // Increased max slightly? Adjust as needed
         step: 1,
       },
     },
@@ -134,7 +159,7 @@ export const TFIDFSchema: ModelSettingsDict = {
       "ui:widget": "range",
       "ui:options": {
         min: 100,
-        max: 2000,
+        max: 10000, // Increased max? Adjust as needed
         step: 100,
       },
     },
@@ -152,6 +177,13 @@ export const BooleanSearchSchema: ModelSettingsDict = {
     type: "object",
     required: ["top_k", "required_match_count"],
     properties: {
+      shortName: {
+        type: "string",
+        default: "Boolean Search",
+        title: "Nickname",
+        description:
+          "Unique identifier to appear in ChainForge. Keep it short.",
+      },
       top_k: {
         type: "number",
         default: 5,
@@ -165,6 +197,12 @@ export const BooleanSearchSchema: ModelSettingsDict = {
     },
   },
   uiSchema: {
+    shortName: {
+      "ui:widget": "text",
+      "ui:options": {
+        placeholder: "Custom name for your retrieval method",
+      },
+    },
     top_k: {
       "ui:widget": "range",
       "ui:options": {
@@ -195,6 +233,13 @@ export const KeywordOverlapSchema: ModelSettingsDict = {
     type: "object",
     required: ["top_k", "normalization_factor"],
     properties: {
+      shortName: {
+        type: "string",
+        default: "Keyword Overlap",
+        title: "Nickname",
+        description:
+          "Unique identifier to appear in ChainForge. Keep it short.",
+      },
       top_k: {
         type: "number",
         default: 5,
@@ -208,6 +253,12 @@ export const KeywordOverlapSchema: ModelSettingsDict = {
     },
   },
   uiSchema: {
+    shortName: {
+      "ui:widget": "text",
+      "ui:options": {
+        placeholder: "Custom name for your retrieval method",
+      },
+    },
     top_k: {
       "ui:widget": "range",
       "ui:options": {
@@ -238,6 +289,13 @@ export const CosineSimilaritySchema: ModelSettingsDict = {
     type: "object",
     required: ["top_k", "similarity_threshold"],
     properties: {
+      shortName: {
+        type: "string",
+        default: "Cosine Similarity",
+        title: "Nickname",
+        description:
+          "Unique identifier to appear in ChainForge. Keep it short.",
+      },
       top_k: {
         type: "number",
         default: 5,
@@ -245,8 +303,13 @@ export const CosineSimilaritySchema: ModelSettingsDict = {
       },
       similarity_threshold: {
         type: "number",
-        default: 0.7,
-        title: "Similarity Threshold",
+        default: 50,
+        title: "Similarity Threshold (%)",
+        minimum: 0,
+        maximum: 100,
+        step: 1,
+        description:
+          "Minimum similarity percentage (0-100) required for a result to be considered relevant.",
       },
       embeddingModel: {
         type: "string",
@@ -256,6 +319,12 @@ export const CosineSimilaritySchema: ModelSettingsDict = {
     },
   },
   uiSchema: {
+    shortName: {
+      "ui:widget": "text",
+      "ui:options": {
+        placeholder: "Custom name for your retrieval method",
+      },
+    },
     top_k: {
       "ui:widget": "range",
       "ui:options": {
@@ -290,6 +359,13 @@ export const ManhattanDistanceSchema: ModelSettingsDict = {
     type: "object",
     required: ["top_k", "similarity_threshold", "pooling_strategy"],
     properties: {
+      shortName: {
+        type: "string",
+        default: "Manhattan distance",
+        title: "Nickname",
+        description:
+          "Unique identifier to appear in ChainForge. Keep it short.",
+      },
       top_k: {
         type: "number",
         default: 5,
@@ -297,8 +373,13 @@ export const ManhattanDistanceSchema: ModelSettingsDict = {
       },
       similarity_threshold: {
         type: "number",
-        default: 0.7,
-        title: "Similarity Threshold",
+        default: 50,
+        title: "Similarity Threshold (%)",
+        minimum: 0,
+        maximum: 100,
+        step: 1,
+        description:
+          "Minimum similarity percentage (0-100) required for a result to be considered relevant.",
       },
       pooling_strategy: {
         type: "string",
@@ -314,6 +395,12 @@ export const ManhattanDistanceSchema: ModelSettingsDict = {
     },
   },
   uiSchema: {
+    shortName: {
+      "ui:widget": "text",
+      "ui:options": {
+        placeholder: "Custom name for your retrieval method",
+      },
+    },
     top_k: {
       "ui:widget": "range",
       "ui:options": {
@@ -351,6 +438,13 @@ export const EuclideanDistanceSchema: ModelSettingsDict = {
     type: "object",
     required: ["top_k", "similarity_threshold", "vector_dimension"],
     properties: {
+      shortName: {
+        type: "string",
+        default: "Euclidean distance",
+        title: "Nickname",
+        description:
+          "Unique identifier to appear in ChainForge. Keep it short.",
+      },
       top_k: {
         type: "number",
         default: 5,
@@ -358,8 +452,13 @@ export const EuclideanDistanceSchema: ModelSettingsDict = {
       },
       similarity_threshold: {
         type: "number",
-        default: 0.7,
-        title: "Similarity Threshold",
+        default: 50,
+        title: "Similarity Threshold (%)",
+        minimum: 0,
+        maximum: 100,
+        step: 1,
+        description:
+          "Minimum similarity percentage (0-100) required for a result to be considered relevant.",
       },
       vector_dimension: {
         type: "number",
@@ -374,6 +473,12 @@ export const EuclideanDistanceSchema: ModelSettingsDict = {
     },
   },
   uiSchema: {
+    shortName: {
+      "ui:widget": "text",
+      "ui:options": {
+        placeholder: "Custom name for your retrieval method",
+      },
+    },
     top_k: {
       "ui:widget": "range",
       "ui:options": {
@@ -416,6 +521,13 @@ export const ClusteredEmbeddingSchema: ModelSettingsDict = {
     type: "object",
     required: ["top_k", "similarity_threshold", "n_clusters"],
     properties: {
+      shortName: {
+        type: "string",
+        default: "Clustered Embedding",
+        title: "Nickname",
+        description:
+          "Unique identifier to appear in ChainForge. Keep it short.",
+      },
       top_k: {
         type: "number",
         default: 5,
@@ -423,8 +535,13 @@ export const ClusteredEmbeddingSchema: ModelSettingsDict = {
       },
       similarity_threshold: {
         type: "number",
-        default: 0.7,
-        title: "Similarity Threshold",
+        default: 50,
+        title: "Similarity Threshold (%)",
+        minimum: 0,
+        maximum: 100,
+        step: 1,
+        description:
+          "Minimum similarity percentage (0-100) required for a result to be considered relevant.",
       },
       n_clusters: {
         type: "number",
@@ -439,6 +556,12 @@ export const ClusteredEmbeddingSchema: ModelSettingsDict = {
     },
   },
   uiSchema: {
+    shortName: {
+      "ui:widget": "text",
+      "ui:options": {
+        placeholder: "Custom name for your retrieval method",
+      },
+    },
     top_k: {
       "ui:widget": "range",
       "ui:options": {
@@ -475,16 +598,31 @@ export const ClusteredEmbeddingSchema: ModelSettingsDict = {
  */
 export const FAISSSchema: ModelSettingsDict = {
   fullName: "FAISS Vectorstore",
-  description: "Persistent vector storage using FAISS for efficient similarity search.",
+  description:
+    "Persistent vector storage using FAISS for efficient similarity search.",
   schema: {
     type: "object",
-    required: ["top_k", "similarity_threshold", "faissMode", "faissPath", "metric"],
+    required: [
+      "top_k",
+      "similarity_threshold",
+      "faissMode",
+      "faissPath",
+      "metric",
+    ],
     properties: {
+      shortName: {
+        type: "string",
+        default: "FAISS Vectorstore",
+        title: "Nickname",
+        description:
+          "Unique identifier to appear in ChainForge. Keep it short.",
+      },
       top_k: {
         type: "number",
         default: 5,
         title: "Top K Results",
-        description: "The number of top matching results to retrieve from the FAISS index.",
+        description:
+          "The number of top matching results to retrieve from the FAISS index.",
       },
       similarity_threshold: {
         type: "number",
@@ -493,31 +631,41 @@ export const FAISSSchema: ModelSettingsDict = {
         minimum: 0,
         maximum: 100,
         step: 1,
-        description: "Minimum similarity percentage (0-100) required for a result to be considered relevant.",
+        description:
+          "Minimum similarity percentage (0-100) required for a result to be considered relevant.",
       },
       faissMode: {
         type: "string",
         default: "create",
         title: "FAISS Mode",
         enum: ["create", "load"],
-        description: "Select whether to create a new FAISS index or load an existing one.",
+        description:
+          "Select whether to create a new FAISS index or load an existing one.",
       },
       faissPath: {
         type: "string",
         default: "",
         title: "FAISS Index Path",
-        description: "The file path where the FAISS index will be saved or loaded from.",
+        description:
+          "The file path where the FAISS index will be saved or loaded from.",
       },
       metric: {
         type: "string",
         default: "l2",
         title: "FAISS Distance Metric",
         enum: ["l2", "ip"],
-        description: "Select the similarity measure used in FAISS: L2 (Euclidean Distance) or IP (Inner Product).",
+        description:
+          "Select the similarity measure used in FAISS: L2 (Euclidean Distance) or IP (Inner Product).",
       },
     },
   },
   uiSchema: {
+    shortName: {
+      "ui:widget": "text",
+      "ui:options": {
+        placeholder: "Custom name for your retrieval method",
+      },
+    },
     top_k: {
       "ui:widget": "range",
       "ui:options": {
@@ -533,13 +681,13 @@ export const FAISSSchema: ModelSettingsDict = {
         max: 100,
         step: 1,
       },
-    },    
+    },
     faissMode: {
       "ui:widget": "select",
       "ui:options": {
         enumOptions: [
           { label: "Create a new FAISS index", value: "create" },
-          { label: "Load an existing FAISS index", value: "load" }
+          { label: "Load an existing FAISS index", value: "load" },
         ],
       },
     },
@@ -554,7 +702,7 @@ export const FAISSSchema: ModelSettingsDict = {
       "ui:options": {
         enumOptions: [
           { label: "L2 (Euclidean Distance)", value: "l2" },
-          { label: "IP (Inner Product / Cosine Similarity)", value: "ip" }
+          { label: "IP (Inner Product / Cosine Similarity)", value: "ip" },
         ],
       },
     },
@@ -562,13 +710,13 @@ export const FAISSSchema: ModelSettingsDict = {
   postprocessors: {},
 };
 
-
 /**
  * Pinecone Vectorstore
  */
 export const PineconeSchema: ModelSettingsDict = {
   fullName: "Pinecone Vectorstore",
-  description: "Persistent vector storage using Pinecone for scalable and efficient similarity search.",
+  description:
+    "Persistent vector storage using Pinecone for scalable and efficient similarity search.",
   schema: {
     type: "object",
     required: [
@@ -578,9 +726,17 @@ export const PineconeSchema: ModelSettingsDict = {
       "pineconeIndex",
       "pineconeApiKey",
       "pineconeEnvironment",
-      "metric"
+      "metric",
+      "shortName",
     ],
     properties: {
+      shortName: {
+        type: "string",
+        default: "Pinecone Vectorstore",
+        title: "Nickname",
+        description:
+          "Unique identifier to appear in ChainForge. Keep it short.",
+      },
       top_k: {
         type: "number",
         default: 5,
@@ -594,14 +750,16 @@ export const PineconeSchema: ModelSettingsDict = {
         minimum: 0,
         maximum: 100,
         step: 1,
-        description: "Minimum similarity percentage (0-100) required for a result to be considered relevant.",
+        description:
+          "Minimum similarity percentage (0-100) required for a result to be considered relevant.",
       },
       pineconeMode: {
         type: "string",
         default: "create",
         title: "Pinecone Mode",
-        enum: ["create", "load", "use"],
-        description: "Select whether to create a new Pinecone index, load an existing one, or just use it.",
+        enum: ["create", "load"],
+        description:
+          "Select whether to create a new Pinecone index or load an existing one. - ⚠️ Warning: Using 'create' will overwrite an existing vector store with the same name.",
       },
       pineconeIndex: {
         type: "string",
@@ -619,24 +777,33 @@ export const PineconeSchema: ModelSettingsDict = {
         type: "string",
         default: "us-east-1",
         title: "Pinecone Environment",
-        description: "The Pinecone region where your index is hosted (e.g., 'us-west1-gcp').",
+        description:
+          "The Pinecone region where your index is hosted (e.g., 'us-west1-gcp').",
       },
       metric: {
         type: "string",
         default: "cosine",
         title: "Distance Metric",
         enum: ["cosine", "euclidean", "dotproduct"],
-        description: "Select the similarity measure used for retrieval: Cosine, Euclidean, or Dot Product.",
+        description:
+          "Select the similarity measure used for retrieval: Cosine, Euclidean, or Dot Product.",
       },
       namespace: {
         type: "string",
         default: "",
         title: "Namespace",
-        description: "Optional: Use namespaces to separate different sets of vectors in the same index.",
+        description:
+          "Optional: Use namespaces to separate different sets of vectors in the same index.",
       },
     },
   },
   uiSchema: {
+    shortName: {
+      "ui:widget": "text",
+      "ui:options": {
+        placeholder: "Custom name for your retrieval method",
+      },
+    },
     top_k: {
       "ui:widget": "range",
       "ui:options": {
@@ -659,7 +826,7 @@ export const PineconeSchema: ModelSettingsDict = {
         enumOptions: [
           { label: "Create a new Pinecone index", value: "create" },
           { label: "Load an existing Pinecone index", value: "load" },
-          { label: "Use an existing Pinecone index", value: "use" }
+          { label: "Use an existing Pinecone index", value: "use" },
         ],
       },
     },
@@ -687,23 +854,23 @@ export const PineconeSchema: ModelSettingsDict = {
         enumOptions: [
           { label: "Cosine Similarity", value: "cosine" },
           { label: "Euclidean Distance", value: "euclidean" },
-          { label: "Dot Product", value: "dotproduct" }
+          { label: "Dot Product", value: "dotproduct" },
         ],
       },
     },
     namespace: {
       "ui:widget": "text",
       "ui:options": {
-        placeholder: "Optional: Specify a namespace (leave empty if not needed)",
+        placeholder:
+          "Optional: Specify a namespace (leave empty if not needed)",
       },
     },
   },
   postprocessors: {},
 };
 
-
 /**
- * ChromaDB Vectorstore Configuration Schema
+ * ChromaDB Vectorstore
  *
  */
 export const ChromaDBSchema: ModelSettingsDict = {
@@ -713,47 +880,69 @@ export const ChromaDBSchema: ModelSettingsDict = {
     type: "object",
     required: ["top_k", "similarity_threshold", "chromaMode"],
     properties: {
+      shortName: {
+        type: "string",
+        default: "ChromaDB Vectorstore",
+        title: "Nickname",
+        description:
+          "Unique identifier to appear in ChainForge. Keep it short.",
+      },
       top_k: {
         type: "number",
         default: 5,
         title: "Top K Results",
-        description: "The number of closest matches to retrieve during a query.",
+        description:
+          "The number of closest matches to retrieve during a query.",
       },
       similarity_threshold: {
         type: "number",
         default: 50,
         title: "Similarity Threshold (%)",
-        description: "Minimum similarity score (0-100) required for a match to be considered relevant.",
+        minimum: 0,
+        maximum: 100,
+        step: 1,
+        description:
+          "Minimum similarity percentage (0-100) required for a result to be considered relevant.",
       },
       chromaMode: {
         type: "string",
         default: "memory",
         title: "ChromaDB Mode",
         enum: ["memory", "persistent"],
-        description: "Defines whether ChromaDB operates in memory mode (non-persistent) or **persistent mode (data is saved).",
+        description:
+          "Defines whether ChromaDB operates in memory mode (non-persistent) or **persistent mode (data is saved).",
       },
       chromaPersistDir: {
         type: "string",
         default: "",
         title: "Persistence Directory (if persistent mode)",
-        description: "Directory path where ChromaDB will store vectors when using persistent mode.",
+        description:
+          "Directory path where ChromaDB will store vectors when using persistent mode.",
       },
       chromaCollection: {
         type: "string",
         default: "default_collection",
         title: "Collection Name",
-        description: "Name of the ChromaDB collection where vectors will be stored and retrieved.",
+        description:
+          "Name of the ChromaDB collection where vectors will be stored and retrieved.",
       },
       metric: {
         type: "string",
         default: "cosine",
         title: "Distance Metric",
         enum: ["cosine", "l2", "ip"],
-        description: "Select the similarity measure used for retrieval:\n- Cosine Similarity: Measures the angle between vectors.\n- Euclidean Distance (L2): Measures absolute distance.\n- Dot Product (IP): Measures vector projection.",
+        description:
+          "Select the similarity measure used for retrieval:\n- Cosine Similarity: Measures the angle between vectors.\n- Euclidean Distance (L2): Measures absolute distance.\n- Dot Product (IP): Measures vector projection.",
       },
     },
   },
   uiSchema: {
+    shortName: {
+      "ui:widget": "text",
+      "ui:options": {
+        placeholder: "Custom name for your retrieval method",
+      },
+    },
     top_k: {
       "ui:widget": "range",
       "ui:options": {
@@ -785,7 +974,7 @@ export const ChromaDBSchema: ModelSettingsDict = {
         enumOptions: [
           { label: "Cosine Similarity", value: "cosine" },
           { label: "Euclidean Distance", value: "l2" },
-          { label: "Dot Product", value: "ip" }
+          { label: "Dot Product", value: "ip" },
         ],
       },
     },
@@ -793,6 +982,133 @@ export const ChromaDBSchema: ModelSettingsDict = {
   postprocessors: {},
 };
 
+/**
+ * CosmosDB Vectorstore
+ *
+ */
+export const CosmosDBSchema: ModelSettingsDict = {
+  fullName: "CosmosDB Vectorstore",
+  description:
+    "Persistent vector storage using Azure Cosmos DB for similarity search.",
+  schema: {
+    type: "object",
+    required: [
+      "top_k",
+      "similarity_threshold",
+      "cosmosMode",
+      "cosmosContainer",
+      "cosmosEndpoint",
+      "cosmosKey",
+    ],
+    properties: {
+      shortName: {
+        type: "string",
+        default: "CosmosDB Vectorstore",
+        title: "Nickname",
+        description:
+          "Unique identifier to appear in ChainForge. Keep it short.",
+      },
+      top_k: {
+        type: "number",
+        default: 5,
+        title: "Top K Results",
+      },
+      similarity_threshold: {
+        type: "number",
+        default: 50,
+        title: "Similarity Threshold (%)",
+        minimum: 0,
+        maximum: 100,
+        step: 1,
+        description:
+          "Minimum similarity percentage (0-100) required for a result to be considered relevant.",
+      },
+      cosmosMode: {
+        type: "string",
+        default: "create",
+        title: "CosmosDB Mode",
+        enum: ["create", "load"],
+        description:
+          "Choose whether to create a new container or load an existing one. ⚠️ Creating may overwrite existing data.",
+      },
+      cosmosContainer: {
+        type: "string",
+        default: "vector-container",
+        title: "Cosmos Container Name",
+      },
+      cosmosEndpoint: {
+        type: "string",
+        default: "",
+        title: "Cosmos Endpoint URI",
+      },
+      cosmosKey: {
+        type: "string",
+        default: "",
+        title: "Cosmos Primary Key",
+      },
+      embeddingModel: {
+        type: "string",
+        title: "Embedding Model",
+        default: "",
+      },
+    },
+  },
+  uiSchema: {
+    shortName: {
+      "ui:widget": "text",
+      "ui:options": {
+        placeholder: "Custom name for your retrieval method",
+      },
+    },
+    top_k: {
+      "ui:widget": "range",
+      "ui:options": {
+        min: 1,
+        max: 20,
+        step: 1,
+      },
+    },
+    similarity_threshold: {
+      "ui:widget": "range",
+      "ui:options": {
+        min: 0,
+        max: 100,
+        step: 1,
+      },
+    },
+    cosmosMode: {
+      "ui:widget": "select",
+      "ui:options": {
+        enumOptions: [
+          { label: "Create a new CosmosDB container", value: "create" },
+          { label: "Load an existing container", value: "load" },
+        ],
+      },
+    },
+    cosmosContainer: {
+      "ui:widget": "text",
+      "ui:options": {
+        placeholder: "Container name (e.g., vectors)",
+      },
+    },
+    cosmosEndpoint: {
+      "ui:widget": "text",
+      "ui:options": {
+        placeholder: "Your CosmosDB endpoint URI",
+      },
+    },
+    cosmosKey: {
+      "ui:widget": "password",
+      "ui:options": {
+        placeholder: "Your CosmosDB primary key",
+      },
+    },
+    embeddingModel: {
+      "ui:widget": "select",
+    },
+  },
+  postprocessors: {},
+};
 
 // Combined schema object for all retrieval methods
 export const RetrievalMethodSchemas: {
@@ -809,6 +1125,7 @@ export const RetrievalMethodSchemas: {
   faiss: FAISSSchema,
   pinecone: PineconeSchema,
   chromadb: ChromaDBSchema,
+  cosmosdb: CosmosDBSchema,
 };
 
 // Method groupings for the menu
@@ -911,6 +1228,14 @@ export const retrievalMethodGroups = [
         methodName: "ChromaDB Vectorstore",
         library: "ChromaDB",
         emoji: "🧠",
+        group: "Vectorstores",
+        needsEmbeddingModel: true,
+      },
+      {
+        baseMethod: "cosmosdb",
+        methodName: "CosmosDB Vectorstore",
+        library: "CosmosDB",
+        emoji: "☄️",
         group: "Vectorstores",
         needsEmbeddingModel: true,
       },

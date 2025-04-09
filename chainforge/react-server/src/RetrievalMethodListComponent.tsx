@@ -131,7 +131,7 @@ const RetrievalMethodListItem: React.FC<RetrievalMethodListItemProps> = ({
           <Group spacing="xs" noWrap>
             <Text size="sm">
               {methodItem.emoji && `${methodItem.emoji} `}
-              {methodItem.methodName}
+              {methodItem.settings?.shortName?.trim() || methodItem.methodName}
             </Text>
           </Group>
         </Box>

@@ -50,6 +50,9 @@ const UploadNode: React.FC<UploadNodeProps> = ({ data, id, type }) => {
     { open: openFileListModal, close: closeFileListModal },
   ] = useDisclosure(false);
 
+  const [fileListCollapsed, setFileListCollapsed] = useState(true);
+  const toggleFileList = () => setFileListCollapsed((prev) => !prev);
+
   const showAlert = useContext(AlertModalContext);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -157,17 +160,6 @@ const UploadNode: React.FC<UploadNodeProps> = ({ data, id, type }) => {
         nodeId={id}
         icon={nodeIcon}
         status={status}
-        customButtons={[
-          <Tooltip label="View Uploaded Files" withArrow key="view-files">
-            <button
-              className="custom-button"
-              onClick={openFileListModal}
-              style={{ border: "none", background: "none" }}
-            >
-              <IconList size="16px" color="gray" />
-            </button>
-          </Tooltip>,
-        ]}
       />
 
       <div
@@ -205,40 +197,67 @@ const UploadNode: React.FC<UploadNodeProps> = ({ data, id, type }) => {
         style={{ top: "50%" }}
       />
 
-      <Modal
-        title={`Uploaded Files (${fields.length})`}
-        size="md"
-        opened={fileListModalOpened}
-        onClose={closeFileListModal}
-      >
-        {fields.length === 0 ? (
-          <Text color="dimmed">No files uploaded.</Text>
-        ) : (
-          fields.map((field, index) => (
-            <Group position="apart" mb="xs" key={field.metavars?.id}>
-              <div>
-                <Text size="sm" weight={500}>
-                  {field.metavars?.filename || "Untitled file"}
-                </Text>
-                {field.text && (
-                  <Text size="xs" color="dimmed">
-                    {field.text.slice(0, 50)}
-                    {field.text.length > 50 ? "..." : ""}
-                  </Text>
-                )}
-              </div>
-              <Button
-                variant="subtle"
-                color="red"
-                size="xs"
-                onClick={() => handleRemoveFile(index)}
-              >
-                <IconTrash size="14" />
-              </Button>
-            </Group>
-          ))
+      <Box mt="sm">
+        <Group position="apart" mb="xs">
+          <Text size="sm" weight={500}>
+            Uploaded Files ({fields.length})
+          </Text>
+          {fields.length > 0 && (
+            <Button size="xs" variant="light" compact onClick={toggleFileList}>
+              {fileListCollapsed ? "Show Files ▼" : "Hide Files ▲"}
+            </Button>
+          )}
+        </Group>
+
+        {!fileListCollapsed && fields.length > 0 && (
+          <Box
+            style={{
+              maxHeight: 200,
+              overflowY: "auto",
+              border: "1px solid #eee",
+              borderRadius: "8px",
+              padding: "8px",
+              background: "#fafafa",
+            }}
+          >
+            <List spacing="xs" size="sm">
+              {fields.map((field, index) => (
+                <List.Item
+                  key={field.metavars?.id}
+                  icon={
+                    <ThemeIcon color="blue" size={20} radius="xl">
+                      📄
+                    </ThemeIcon>
+                  }
+                >
+                  <Group position="apart">
+                    <Box>
+                      <Text size="sm" weight={500}>
+                        {field.metavars?.filename || "Untitled file"}
+                      </Text>
+                      {field.text && (
+                        <Text size="xs" color="dimmed">
+                          {field.text.slice(0, 50)}
+                          {field.text.length > 50 ? "..." : ""}
+                        </Text>
+                      )}
+                    </Box>
+                    <Button
+                      variant="subtle"
+                      color="red"
+                      size="xs"
+                      onClick={() => handleRemoveFile(index)}
+                      compact
+                    >
+                      <IconTrash size="14" />
+                    </Button>
+                  </Group>
+                </List.Item>
+              ))}
+            </List>
+          </Box>
         )}
-      </Modal>
+      </Box>
     </BaseNode>
   );
 };

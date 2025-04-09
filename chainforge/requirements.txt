@@ -28,3 +28,5 @@ langchain-openai
 faiss-cpu
 langchain-community
 pinecone
+chromadb
+azure-cosmos

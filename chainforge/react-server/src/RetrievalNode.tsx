@@ -14,6 +14,8 @@ import NodeLabel from "./NodeLabelComponent";
 import useStore from "./store";
 import InspectFooter from "./InspectFooter";
 import { AlertModalContext } from "./AlertModal";
+import AreYouSureModal, { AreYouSureModalRef } from "./AreYouSureModal";
+
 import LLMResponseInspectorModal, {
   LLMResponseInspectorModalRef,
 } from "./LLMResponseInspectorModal";
@@ -65,6 +67,7 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ id, data }) => {
   // Refs
   const inspectorModalRef = useRef<LLMResponseInspectorModalRef>(null);
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
+  const retrievalConfirmModalRef = useRef<AreYouSureModalRef>(null);
   const [hooksY, setHooksY] = useState(138);
 
   // Reset on refresh
@@ -169,6 +172,10 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ id, data }) => {
   );
 
   // Main retrieval function
+  const confirmAndRunRetrieval = () => {
+    retrievalConfirmModalRef.current?.trigger();
+  };
+
   const runRetrieval = useCallback(async () => {
     if (methodItems.length === 0) {
       showAlert?.("Please add at least one retrieval method");
@@ -199,7 +206,7 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ id, data }) => {
       }
 
       // Make the API request
-      const response = await fetch("http://localhost:5000/retrieve", {
+      const response = await fetch("http://localhost:5001/retrieve", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -345,25 +352,12 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ id, data }) => {
         nodeId={id}
         icon={nodeIcon}
         status={undefined}
-        handleRunClick={runRetrieval}
+        handleRunClick={confirmAndRunRetrieval}
         runButtonTooltip="Run Retrieval"
       />
 
-      <div style={{ padding: 8, position: "relative" }}>
+      <div style={{ padding: 24, position: "relative" }}>
         <LoadingOverlay visible={loading} />
-
-        <Textarea
-          ref={setRef}
-          label="Search Query"
-          placeholder="Enter your query..."
-          className="prompt-field-fixed nodrag nowheel"
-          autosize
-          minRows={4}
-          maxRows={12}
-          value={query}
-          onChange={handleQueryChange}
-          mb="sm"
-        />
       </div>
       <Handle
         type="target"
@@ -407,6 +401,15 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ id, data }) => {
           jsonResponses={jsonResponses}
         />
       </React.Suspense>
+      <AreYouSureModal
+        ref={retrievalConfirmModalRef}
+        title="Confirm Retrieval"
+        message={`⚠️ You're about to run all configured retrieval methods.\n\n
+          Some methods may create, load, or modify vector stores, which could:\n 
+          Overwrite existing data\n or append new data.
+          Make sure your settings and input data are correct before proceeding.`}
+        onConfirm={runRetrieval}
+      />
     </BaseNode>
   );
 };
