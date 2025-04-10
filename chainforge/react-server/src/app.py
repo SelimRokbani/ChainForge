@@ -18,7 +18,10 @@ from dotenv import load_dotenv
 import logging
 import math
 import tempfile
-import openai
+import requests
+from cachetools import TTLCache
+import hashlib
+from typing import Dict, List, Any
 
 # For Retrieval Methods
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -26,6 +29,14 @@ from rank_bm25 import BM25Okapi
 from whoosh import index
 from whoosh.fields import Schema, TEXT, ID
 from whoosh.qparser import QueryParser
+
+# RAGAS imports
+from ragas import evaluate as ragas_evaluate
+from ragas.metrics import context_precision, context_recall, answer_relevancy
+from datasets import Dataset
+from langchain_community.chat_models import ChatOpenAI
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import HumanMessage, SystemMessage
 
 load_dotenv()
 
@@ -50,13 +61,110 @@ else:
     co = None
     logger.warning("Cohere API key not found. Cohere-based chunking methods unavailable.")
 
-openai.api_key = os.getenv("OPENAI_API_KEY", "")
-if not openai.api_key:
-    logger.warning("OpenAI API key not found. OpenAI-based embeddings will fail unless you set OPENAI_API_KEY.")
-
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})
+# Explicitly allow localhost:3000 and ensure proper headers
+CORS(app, resources={r"/*": {"origins": "http://localhost:3000"}}, supports_credentials=True)
 
+# Initialize cache
+cache = TTLCache(maxsize=100, ttl=3600)
+
+# -------------------- Custom LLM for RAGAS (LM Studio) --------------------
+class CustomLMStudioChat(BaseChatModel):
+    def __init__(self, api_url: str, model: str, temperature: float = 0.0):
+        super().__init__()
+        self._api_url = api_url
+        self._model = model
+        self._temperature = temperature
+        logger.info(f"Initialized CustomLMStudioChat with api_url={self._api_url}, model={self._model}, temperature={self._temperature}")
+
+    @property
+    def api_url(self) -> str:
+        return self._api_url
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    @property
+    def temperature(self) -> float:
+        return self._temperature
+
+    @temperature.setter
+    def temperature(self, value: float):
+        self._temperature = value
+        logger.info(f"Temperature updated to {self._temperature}")
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        from langchain_core.outputs import ChatGeneration, ChatResult
+
+        logger.info(f"Generating with api_url={self._api_url}, model={self._model}, temperature={self._temperature}")
+        logger.debug(f"Input messages: {messages}, stop: {stop}")
+
+        lm_messages = []
+        for msg in messages:
+            if isinstance(msg, SystemMessage):
+                lm_messages.append({"role": "system", "content": msg.content})
+            elif isinstance(msg, HumanMessage):
+                lm_messages.append({"role": "user", "content": msg.content})
+            else:
+                logger.warning(f"Unsupported message type: {type(msg)}")
+
+        logger.debug(f"Formatted messages for LM Studio: {lm_messages}")
+
+        payload = {
+            "model": self._model,
+            "messages": lm_messages,
+            "max_tokens": 512,
+            "stream": False,
+        }
+        if self._temperature != 0.0:
+            payload["temperature"] = self._temperature
+
+        # LM Studio doesn't support 'stop' directly, log it for debugging
+        if stop:
+            logger.debug(f"Stop sequence ignored (not supported by LM Studio): {stop}")
+
+        logger.debug(f"Sending payload to LM Studio: {payload}")
+
+        try:
+            response = requests.post(
+                self._api_url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=30,
+            )
+            response.raise_for_status()
+            data = response.json()
+            logger.info(f"LM Studio response: {data}")
+
+            content = data["choices"][0]["message"]["content"]
+            logger.debug(f"Extracted content: {content}")
+
+            generation = ChatGeneration(
+                message=SystemMessage(content=content),
+                generation_info={"model": self._model},
+            )
+            return ChatResult(generations=[generation])
+        except requests.Timeout:
+            logger.error("Request to LM Studio timed out after 30 seconds")
+            raise Exception("LM Studio API request timed out")
+        except Exception as e:
+            logger.error(f"LM Studio API error: {str(e)}", exc_info=True)
+            raise Exception(f"LM Studio API error: {str(e)}")
+
+    @property
+    def _llm_type(self) -> str:
+        return "custom_lm_studio"
+
+    def _get_invocation_params(self, stop=None, **kwargs):
+        # Accept stop parameter to avoid TypeError, but LM Studio doesn't use it
+        params = {
+            "model": self._model,
+            "temperature": self._temperature,
+        }
+        if stop:
+            logger.debug(f"Stop parameter passed but ignored: {stop}")
+        return params
 # -------------------- File Extraction Helpers --------------------
 def extract_text_from_pdf(file_bytes):
     try:
@@ -373,14 +481,6 @@ def vectorize_texts(library, texts):
                 emb = outputs.last_hidden_state.mean(dim=1).squeeze().tolist()
                 embeddings.append(emb)
             return embeddings
-        elif library == "OpenAI Embeddings":
-            if not openai.api_key:
-                raise ValueError("OpenAI API key missing.")
-            embeddings = []
-            for t in texts:
-                resp = openai.Embedding.create(input=t, model="text-embedding-ada-002")
-                embeddings.append(resp["data"][0]["embedding"])
-            return embeddings
         elif library == "Cohere Embeddings":
             if not co:
                 raise ValueError("Cohere client not initialized.")
@@ -512,7 +612,6 @@ def process_file():
                     continue
             settings[k] = val
     
-    # NEW: Log the converted settings for debugging purposes.
     logger.info(f"Converted settings: {settings}")
 
     if not method_name or not library:
@@ -560,9 +659,34 @@ def retrieve():
     if not chunk_data or not query:
         return jsonify({"error": "Missing chunks or query"}), 400
 
+    # Additional validation for empty chunks
+    # Filter out any chunks with empty text
+    chunk_data = [c for c in chunk_data if c.get("text", "").strip()]
+    
+    if not chunk_data:
+        logger.warning("All chunks were empty. Returning empty results.")
+        return jsonify({"retrieved": []}), 200
+
+    # Extract all metadata from input chunks
     chunk_texts = [c.get("text", "") if isinstance(c, dict) else str(c) for c in chunk_data]
+    # Additional safety check
+    chunk_texts = [t for t in chunk_texts if t and t.strip()]
+    
+    if not chunk_texts:
+        logger.warning("No valid chunk texts to process")
+        return jsonify({"retrieved": []}), 200
+        
     chunk_objs = [c if isinstance(c, dict) else {"text": str(c)} for c in chunk_data]
     top_k = min(top_k, len(chunk_texts)) if chunk_texts else 0
+
+    # Debug logging for troubleshooting chunk metadata
+    logger.debug(f"Retrieve endpoint received {len(chunk_data)} chunks")
+    if chunk_data and len(chunk_data) > 0:
+        sample_chunk = chunk_data[0]
+        if isinstance(sample_chunk, dict):
+            logger.debug(f"Sample chunk metadata: {sample_chunk}")
+            logger.debug(f"Sample chunkMethod: {sample_chunk.get('chunkMethod', 'NOT FOUND')}")
+            logger.debug(f"Sample text length: {len(sample_chunk.get('text', ''))}")
 
     try:
         if method_type == "vectorization":
@@ -576,6 +700,8 @@ def retrieve():
                         "similarity": float(cosine_similarity(emb, query_embedding)),
                         "docTitle": chunk_objs[i].get("docTitle", ""),
                         "chunkId": chunk_objs[i].get("chunkId", ""),
+                        # Make sure to preserve the chunkMethod
+                        "chunkMethod": chunk_objs[i].get("chunkMethod", ""),
                     }
                     for i, emb in enumerate(chunk_embeddings)
                 ]
@@ -591,6 +717,7 @@ def retrieve():
                         "similarity": float(1.0 / (1.0 + manhattan_distance(emb, query_embedding))),
                         "docTitle": chunk_objs[i].get("docTitle", ""),
                         "chunkId": chunk_objs[i].get("chunkId", ""),
+                        "chunkMethod": chunk_objs[i].get("chunkMethod", ""),
                     }
                     for i, emb in enumerate(chunk_embeddings)
                 ]
@@ -606,6 +733,7 @@ def retrieve():
                         "similarity": float(1.0 / (1.0 + euclidean_distance(emb, query_embedding))),
                         "docTitle": chunk_objs[i].get("docTitle", ""),
                         "chunkId": chunk_objs[i].get("chunkId", ""),
+                        "chunkMethod": chunk_objs[i].get("chunkMethod", ""),
                     }
                     for i, emb in enumerate(chunk_embeddings)
                 ]
@@ -625,6 +753,7 @@ def retrieve():
                         "similarity": float(0.6 * cosine_similarity(emb, query_embedding) + 0.4 * cosine_similarity(emb, cluster_centers[labels[i]])),
                         "docTitle": chunk_objs[i].get("docTitle", ""),
                         "chunkId": chunk_objs[i].get("chunkId", ""),
+                        "chunkMethod": chunk_objs[i].get("chunkMethod", ""),
                     }
                     for i, emb in enumerate(chunk_embeddings)
                 ]
@@ -638,11 +767,16 @@ def retrieve():
                         "similarity": float(cosine_similarity(emb, query_embedding)),
                         "docTitle": chunk_objs[i].get("docTitle", ""),
                         "chunkId": chunk_objs[i].get("chunkId", ""),
+                        "chunkMethod": chunk_objs[i].get("chunkMethod", ""),
                     }
                     for i, emb in enumerate(chunk_embeddings)
                 ]
                 scored.sort(key=lambda x: x["similarity"], reverse=True)
                 retrieved = scored[:top_k]
+
+            # Log a sample of the retrieved results for debugging
+            if retrieved and len(retrieved) > 0:
+                logger.debug(f"Sample retrieved result: {retrieved[0]}")
 
             return jsonify({"retrieved": retrieved}), 200
 
@@ -664,9 +798,15 @@ def retrieve():
                     "similarity": float(score),
                     "docTitle": chunk_objs[chunk_texts.index(chunk)].get("docTitle", ""),
                     "chunkId": chunk_objs[chunk_texts.index(chunk)].get("chunkId", ""),
+                    "chunkMethod": chunk_objs[chunk_texts.index(chunk)].get("chunkMethod", ""),
                 }
                 for chunk, score in ranked
             ]
+
+            # Log a sample of the retrieved results for debugging
+            if retrieved and len(retrieved) > 0:
+                logger.debug(f"Sample retrieved result: {retrieved[0]}")
+                
             return jsonify({"retrieved": retrieved}), 200
 
     except Exception as e:
@@ -674,4 +814,4 @@ def retrieve():
         return jsonify({"error": f"Retrieval failed: {str(e)}"}), 500
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True, port=5000)

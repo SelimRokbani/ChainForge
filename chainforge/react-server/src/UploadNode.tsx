@@ -17,9 +17,14 @@ import {
   Tooltip,
   List,
   ThemeIcon,
+  TextInput,
+  Badge,
+  Card,
+  Divider,
+  ScrollArea,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
-import { IconUpload, IconTrash, IconList } from "@tabler/icons-react";
+import { IconUpload, IconTrash, IconList, IconEdit, IconCheck } from "@tabler/icons-react";
 import useStore from "./store";
 import BaseNode from "./BaseNode";
 import NodeLabel from "./NodeLabelComponent";
@@ -44,6 +49,8 @@ const UploadNode: React.FC<UploadNodeProps> = ({ data, id, type }) => {
 
   const [fields, setFields] = useState<TemplateVarInfo[]>(data.fields || []);
   const [status, setStatus] = useState<Status>(Status.READY);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editingName, setEditingName] = useState<string>("");
 
   const [
     fileListModalOpened,
@@ -52,6 +59,40 @@ const UploadNode: React.FC<UploadNodeProps> = ({ data, id, type }) => {
 
   const showAlert = useContext(AlertModalContext);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Format file size
+  const formatFileSize = (sizeInBytes: number): string => {
+    if (sizeInBytes < 1024) return `${sizeInBytes} bytes`;
+    if (sizeInBytes < 1024 * 1024) return `${(sizeInBytes / 1024).toFixed(2)} KB`;
+    return `${(sizeInBytes / (1024 * 1024)).toFixed(2)} MB`;
+  };
+
+  // Calculate word count
+  const calculateWordCount = (text: string): number => {
+    return text.trim().split(/\s+/).length;
+  };
+
+  // Start renaming a file
+  const handleStartRename = (index: number) => {
+    setEditingIndex(index);
+    setEditingName(fields[index].metavars?.filename || "");
+  };
+
+  // Save the renamed file
+  const handleSaveRename = (index: number) => {
+    const updatedFields = [...fields];
+    
+    // Update the filename in metavars
+    if (updatedFields[index]?.metavars) {
+      updatedFields[index]!.metavars!.filename = editingName;
+    } else if (updatedFields[index]) {
+      updatedFields[index]!.metavars = { filename: editingName, id: uuid() };
+    }
+    
+    setFields(updatedFields);
+    setDataPropsForNode(id, { fields: updatedFields, output: updatedFields });
+    setEditingIndex(null);
+  };
 
   // Handle file uploads
   const handleFilesUpload = useCallback(
@@ -78,7 +119,7 @@ const UploadNode: React.FC<UploadNodeProps> = ({ data, id, type }) => {
           const json = await res.json();
           const textContent = json.text || "";
 
-          // Add filename + text content as a new TemplateVarInfo
+          // Add filename + text content as a new TemplateVarInfo with timestamp
           updatedFields.push({
             text: textContent,
             prompt: "",
@@ -88,6 +129,7 @@ const UploadNode: React.FC<UploadNodeProps> = ({ data, id, type }) => {
               size: file.size.toString(),
               type: file.type,
               filename: file.name, // important: store doc name
+              uploadedAt: new Date().toISOString(), // Add upload timestamp
               id: uuid(),
             },
           });
@@ -150,6 +192,15 @@ const UploadNode: React.FC<UploadNodeProps> = ({ data, id, type }) => {
     }
   }, [data.refresh, handleClearUploads, id, setDataPropsForNode]);
 
+  // Format date to a more readable format
+  const formatDate = (dateString: string) => {
+    try {
+      return new Date(dateString).toLocaleString();
+    } catch (e) {
+      return "Unknown date";
+    }
+  };
+
   return (
     <BaseNode classNames="upload-node" nodeId={id}>
       <NodeLabel
@@ -207,36 +258,100 @@ const UploadNode: React.FC<UploadNodeProps> = ({ data, id, type }) => {
 
       <Modal
         title={`Uploaded Files (${fields.length})`}
-        size="md"
+        size="lg"
         opened={fileListModalOpened}
         onClose={closeFileListModal}
       >
         {fields.length === 0 ? (
           <Text color="dimmed">No files uploaded.</Text>
         ) : (
-          fields.map((field, index) => (
-            <Group position="apart" mb="xs" key={field.metavars?.id}>
-              <div>
-                <Text size="sm" weight={500}>
-                  {field.metavars?.filename || "Untitled file"}
-                </Text>
-                {field.text && (
-                  <Text size="xs" color="dimmed">
-                    {field.text.slice(0, 50)}
-                    {field.text.length > 50 ? "..." : ""}
+          <ScrollArea h={400}>
+            {fields.map((field, index) => (
+              <Card key={field.metavars?.id} shadow="sm" p="md" mb="md" radius="md" withBorder>
+                <Group position="apart">
+                  {editingIndex === index ? (
+                    <Group>
+                      <TextInput
+                        value={editingName}
+                        onChange={(e) => setEditingName(e.target.value)}
+                        size="sm"
+                        style={{ width: '200px' }}
+                      />
+                      <Button
+                        variant="subtle"
+                        size="xs"
+                        onClick={() => handleSaveRename(index)}
+                      >
+                        <IconCheck size="14" />
+                      </Button>
+                    </Group>
+                  ) : (
+                    <Group>
+                      <Text size="md" weight={600}>
+                        {field.metavars?.filename || "Untitled file"}
+                      </Text>
+                      <Tooltip label="Rename file">
+                        <Button
+                          variant="subtle"
+                          size="xs"
+                          onClick={() => handleStartRename(index)}
+                        >
+                          <IconEdit size="14" />
+                        </Button>
+                      </Tooltip>
+                    </Group>
+                  )}
+                  
+                  <Button
+                    variant="subtle"
+                    color="red"
+                    size="xs"
+                    onClick={() => handleRemoveFile(index)}
+                  >
+                    <IconTrash size="14" />
+                  </Button>
+                </Group>
+
+                <Group spacing="xs" mt="xs">
+                  <Badge color="blue" size="sm">
+                    {field.metavars?.type || "Unknown type"}
+                  </Badge>
+                  <Badge color="teal" size="sm">
+                    {formatFileSize(parseInt(field.metavars?.size || "0"))}
+                  </Badge>
+                  {field.text && (
+                    <Badge color="violet" size="sm">
+                      {calculateWordCount(field.text)} words
+                    </Badge>
+                  )}
+                </Group>
+
+                {field.metavars?.uploadedAt && (
+                  <Text size="xs" color="dimmed" mt="xs">
+                    Uploaded: {formatDate(field.metavars.uploadedAt)}
                   </Text>
                 )}
-              </div>
-              <Button
-                variant="subtle"
-                color="red"
-                size="xs"
-                onClick={() => handleRemoveFile(index)}
-              >
-                <IconTrash size="14" />
-              </Button>
-            </Group>
-          ))
+
+                {field.text && (
+                  <>
+                    <Divider my="sm" label="Preview" labelPosition="center" />
+                    <Text size="xs" color="dimmed" lineClamp={3} style={{ fontFamily: 'monospace' }}>
+                      {field.text.slice(0, 300)}
+                      {field.text.length > 300 ? "..." : ""}
+                    </Text>
+                  </>
+                )}
+              </Card>
+            ))}
+          </ScrollArea>
+        )}
+        
+        {fields.length > 0 && (
+          <Group position="right" mt="md">
+            <Button color="red" variant="light" onClick={handleClearUploads}>
+              Clear All Files
+            </Button>
+          </Group>
         )}
       </Modal>
     </BaseNode>

@@ -10,26 +10,36 @@ export const OverlappingLangChainSchema: ModelSettingsDict = {
     type: "object",
     required: ["chunk_size", "chunk_overlap"],
     properties: {
-      chunk_size: { type: "number", default: 50, title: "Chunk Size" },
-      chunk_overlap: { type: "number", default: 10, title: "Overlap" },
+      chunk_size: { 
+        type: "number", 
+        default: 50, 
+        title: "Chunk Size",
+        minimum: 0,
+        maximum: 500
+      },
+      chunk_overlap: { 
+        type: "number", 
+        default: 10, 
+        title: "Overlap",
+        minimum: 0,
+        maximum: 500
+      },
     },
   },
   uiSchema: {
     chunk_size: {
-      "ui:widget": "range", // HTML range input
+      "ui:widget": "range",
+      "ui:description": "Size of each chunk (0-500)",
       "ui:options": {
-        min: 20,
-        max: 1000,
-        step: 10,
-      },
+        step: 1
+      }
     },
     chunk_overlap: {
       "ui:widget": "range",
+      "ui:description": "Overlap between chunks (0-500)",
       "ui:options": {
-        min: 0,
-        max: 100,
-        step: 5,
-      },
+        step: 1
+      }
     },
   },
   postprocessors: {},
@@ -49,30 +59,32 @@ export const OverlappingOpenAITiktokenSchema: ModelSettingsDict = {
         type: "number",
         default: 50,
         title: "Chunk Size (Tokens)",
+        minimum: 0,
+        maximum: 500
       },
       chunk_overlap: {
         type: "number",
         default: 10,
         title: "Overlap (Tokens)",
+        minimum: 0,
+        maximum: 500
       },
     },
   },
   uiSchema: {
     chunk_size: {
       "ui:widget": "range",
+      "ui:description": "Size of each chunk in tokens (0-500)",
       "ui:options": {
-        min: 20,
-        max: 1000,
-        step: 10,
-      },
+        step: 1
+      }
     },
     chunk_overlap: {
       "ui:widget": "range",
+      "ui:description": "Overlap between chunks in tokens (0-500)",
       "ui:options": {
-        min: 0,
-        max: 100,
-        step: 5,
-      },
+        step: 1
+      }
     },
   },
   postprocessors: {},
@@ -98,20 +110,21 @@ export const OverlappingHuggingfaceTokenizerSchema: ModelSettingsDict = {
         type: "number",
         default: 50,
         title: "Approx. tokens per chunk",
+        minimum: 0,
+        maximum: 500
       },
     },
   },
   uiSchema: {
     tokenizer_model: {
-      "ui:widget": "select", // display as a dropdown
+      "ui:widget": "select",
     },
     chunk_size: {
       "ui:widget": "range",
+      "ui:description": "Size of each chunk in tokens (0-500)",
       "ui:options": {
-        min: 20,
-        max: 1000,
-        step: 10,
-      },
+        step: 1
+      }
     },
   },
   postprocessors: {},
@@ -138,26 +151,36 @@ export const SyntaxTextTilingSchema: ModelSettingsDict = {
     type: "object",
     required: ["w", "k"],
     properties: {
-      w: { type: "number", default: 20, title: "Window size (w)" },
-      k: { type: "number", default: 10, title: "Block comparison size (k)" },
+      w: { 
+        type: "number", 
+        default: 20, 
+        title: "Window size (w)",
+        minimum: 5,
+        maximum: 50
+      },
+      k: { 
+        type: "number", 
+        default: 10, 
+        title: "Block comparison size (k)",
+        minimum: 5,
+        maximum: 50
+      },
     },
   },
   uiSchema: {
     w: {
       "ui:widget": "range",
+      "ui:description": "Window size (5-50)",
       "ui:options": {
-        min: 5,
-        max: 50,
-        step: 5,
-      },
+        step: 1
+      }
     },
     k: {
       "ui:widget": "range",
+      "ui:description": "Block comparison size (5-50)",
       "ui:options": {
-        min: 5,
-        max: 50,
-        step: 5,
-      },
+        step: 1
+      }
     },
   },
   postprocessors: {},
@@ -174,26 +197,36 @@ export const HybridTextTilingSpacySchema: ModelSettingsDict = {
     type: "object",
     required: ["w", "k"],
     properties: {
-      w: { type: "number", default: 20, title: "Window size (w)" },
-      k: { type: "number", default: 10, title: "Block comparison size (k)" },
+      w: { 
+        type: "number", 
+        default: 20, 
+        title: "Window size (w)",
+        minimum: 5,
+        maximum: 50
+      },
+      k: { 
+        type: "number", 
+        default: 10, 
+        title: "Block comparison size (k)",
+        minimum: 5,
+        maximum: 50
+      },
     },
   },
   uiSchema: {
     w: {
       "ui:widget": "range",
+      "ui:description": "Window size (5-50)",
       "ui:options": {
-        min: 5,
-        max: 50,
-        step: 5,
-      },
+        step: 1
+      }
     },
     k: {
       "ui:widget": "range",
+      "ui:description": "Block comparison size (5-50)",
       "ui:options": {
-        min: 5,
-        max: 50,
-        step: 5,
-      },
+        step: 1
+      }
     },
   },
   postprocessors: {},
@@ -213,17 +246,19 @@ export const HybridBERTopicSchema: ModelSettingsDict = {
         type: "number",
         default: 2,
         title: "Min Topic Size",
+        minimum: 2,
+        maximum: 20,
+        validationMessage: "Value must be between 2 and 20."
       },
     },
   },
   uiSchema: {
     min_topic_size: {
       "ui:widget": "range",
+      "ui:description": "Minimum topic size (2-20)",
       "ui:options": {
-        min: 2,
-        max: 20,
-        step: 1,
-      },
+        step: 1
+      }
     },
   },
   postprocessors: {},
@@ -243,17 +278,18 @@ export const HybridRecursiveGensimSchema: ModelSettingsDict = {
         type: "number",
         default: 300,
         title: "Words per chunk",
+        minimum: 0,
+        maximum: 500
       },
     },
   },
   uiSchema: {
     max_words: {
       "ui:widget": "range",
+      "ui:description": "Maximum words per chunk (0-500)",
       "ui:options": {
-        min: 50,
-        max: 2000,
-        step: 50,
-      },
+        step: 5
+      }
     },
   },
   postprocessors: {},
@@ -267,36 +303,38 @@ export const HybridRecursiveCohereSchema: ModelSettingsDict = {
   description: "Uses Cohere's embeddings to guide recursive chunking.",
   schema: {
     type: "object",
-    required: ["max_tokens"],
+    required: ["max_tokens", "threshold"],
     properties: {
       max_tokens: {
         type: "number",
-        default: 512,
+        default: 500,
         title: "Max tokens per chunk",
+        minimum: 0,
+        maximum: 500
       },
       threshold: {
         type: "number",
         default: 0.75,
         title: "Embedding similarity threshold",
+        minimum: 0.0,
+        maximum: 1.0
       },
     },
   },
   uiSchema: {
     max_tokens: {
       "ui:widget": "range",
+      "ui:description": "Maximum tokens per chunk (0-500)",
       "ui:options": {
-        min: 128,
-        max: 2048,
-        step: 128,
-      },
+        step: 5
+      }
     },
     threshold: {
       "ui:widget": "range",
+      "ui:description": "Similarity threshold (0.0-1.0)",
       "ui:options": {
-        min: 0.0,
-        max: 1.0,
-        step: 0.05,
-      },
+        step: 0.05
+      }
     },
   },
   postprocessors: {},
@@ -317,30 +355,32 @@ export const HybridRecursiveBERTopicSchema: ModelSettingsDict = {
         type: "number",
         default: 2,
         title: "Min Topic Size",
+        minimum: 2,
+        maximum: 20
       },
       chunk_size: {
         type: "number",
         default: 300,
         title: "Base chunk size",
+        minimum: 0,
+        maximum: 500
       },
     },
   },
   uiSchema: {
     min_topic_size: {
       "ui:widget": "range",
+      "ui:description": "Minimum topic size (2-20)",
       "ui:options": {
-        min: 2,
-        max: 20,
-        step: 1,
-      },
+        step: 1
+      }
     },
     chunk_size: {
-      "ui:widget": "range",
+      "ui:widget": "range", 
+      "ui:description": "Base chunk size (0-500)",
       "ui:options": {
-        min: 50,
-        max: 2000,
-        step: 50,
-      },
+        step: 5
+      }
     },
   },
   postprocessors: {},

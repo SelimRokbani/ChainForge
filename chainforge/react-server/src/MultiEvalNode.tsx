@@ -20,6 +20,7 @@ import {
   Button,
   Alert,
   Tooltip,
+  Modal, // NEW import
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import {
@@ -34,7 +35,7 @@ import {
   IconTerminal,
   IconTrash,
   IconList, // Add this import
-  IconColumns,
+  // Removed IconColumns,
   IconAlertCircle,
 } from "@tabler/icons-react";
 import BaseNode from "./BaseNode";
@@ -61,7 +62,8 @@ import { Dict, LLMResponse, QueryProgress } from "./backend/typing";
 import { AlertModalContext } from "./AlertModal";
 import { Status } from "./StatusIndicatorComponent";
 import { ragasEvaluators } from "./RagasEvaluators";
-import ColumnMappingModal, { ColumnMappingModalRef, ColumnMapping } from "./ColumnMappingModal";
+import RagasFieldMappingForm, { RagasFieldMappings } from "./RagasFieldMappingform"; // new import
+
 
 const IS_RUNNING_LOCALLY = APP_IS_RUNNING_LOCALLY();
 
@@ -255,7 +257,7 @@ export interface MultiEvalNodeProps {
     evaluators: EvaluatorContainerDesc[];
     refresh: boolean;
     title: string;
-    columnMappings?: ColumnMapping[];
+
   };
   id: string;
 }
@@ -324,16 +326,52 @@ const MultiEvalNode: React.FC<MultiEvalNodeProps> = ({ data, id }) => {
     code: string;
   }
 
+  // Extract available field names for suggestions
+  const [availableFields, setAvailableFields] = useState<string[]>([]);
+
+
+
+  // Extract available fields from input data
+  useEffect(() => {
+    const inputs = handlePullInputs();
+    if (inputs && inputs.length > 0) {
+      const fields = new Set<string>();
+
+      inputs.forEach((response) => {
+        if (response.vars) {
+          Object.keys(response.vars).forEach((key) => fields.add(key));
+        }
+        if (response.metavars) {
+          Object.keys(response.metavars).forEach((key) => fields.add(key));
+        }
+      });
+
+      setAvailableFields(Array.from(fields));
+    }
+  }, [data.refresh]);
+
+  // Modify evaluators code based on field mappings when adding RAGAS evaluators
   const addRagasEvaluator = (evaluator: RagasEvaluator) => {
-    setEvaluators(
-      evaluators.concat({
-        name: evaluator.name,
-        uid: uuid(),
-        type: evaluator.language === "python" ? "python" : "javascript",
-        state: { code: evaluator.code },
-        justAdded: true,
-      }),
-    );
+    let modifiedCode = evaluator.code;
+    if (ragasFieldMappings.questionField && ragasFieldMappings.questionField !== "Question") {
+      modifiedCode = modifiedCode.replace(/response\.meta\?\.\s*Question/g, `response.meta?.${ragasFieldMappings.questionField}`);
+    }
+    if (ragasFieldMappings.answerField && ragasFieldMappings.answerField !== "Answer") {
+      modifiedCode = modifiedCode.replace(/response\.meta\?\.\s*Answer/g, `response.meta?.${ragasFieldMappings.answerField}`);
+    }
+    if (ragasFieldMappings.contextField && ragasFieldMappings.contextField !== "context") {
+      modifiedCode = modifiedCode.replace(/response\.meta\?\.\s*context/g, `response.meta?.${ragasFieldMappings.contextField}`);
+    }
+    if (ragasFieldMappings.groundTruthField && ragasFieldMappings.groundTruthField !== "groundTruth") {
+      modifiedCode = modifiedCode.replace(/response\.meta\?\.\s*ground_truth/g, `response.meta?.${ragasFieldMappings.groundTruthField}`);
+    }
+    setEvaluators(evaluators.concat({
+      name: evaluator.name,
+      uid: uuid(),
+      type: evaluator.language === "python" ? "python" : "javascript",
+      state: { code: modifiedCode },
+      justAdded: true,
+    }));
   };
 
   // Sync evaluator state to stored state of this node
@@ -474,83 +512,12 @@ const MultiEvalNode: React.FC<MultiEvalNodeProps> = ({ data, id }) => {
     }
   }, [pullInputData, id, toStandardResponseFormat]);
 
-  // Column mapping related state and refs
-  const [columnMappings, setColumnMappings] = useState<ColumnMapping[]>(data.columnMappings || []);
-  const [needsColumnMapping, setNeedsColumnMapping] = useState<boolean>(false);
-  const columnMappingModalRef = useRef<ColumnMappingModalRef>(null);
-
-  // Check if column mapping is needed
-  const checkForColumnMapping = useCallback((inputs: LLMResponse[]) => {
-    if (inputs.length === 0) return false;
-    
-    // If we already have mappings, we don't need to map again
-    if (columnMappings.length > 0) return false;
-
-    // Get all the fields from the first response's metadata to detect columns
-    const firstResponse = inputs[0];
-    if (!firstResponse || (!firstResponse.vars && !firstResponse.metavars)) {
-      return false;
-    }
-    
-    // Get metadata fields from both vars and metavars
-    const metadataFields = new Set<string>();
-    
-    if (firstResponse.vars) {
-      Object.keys(firstResponse.vars).forEach(key => metadataFields.add(key));
-    }
-    
-    if (firstResponse.metavars) {
-      Object.keys(firstResponse.metavars).forEach(key => metadataFields.add(key));
-    }
-    
-    // If we have some metadata fields but no mappings, we need to map
-    return metadataFields.size > 0;
-  }, [columnMappings]);
-
-  // Function to open column mapping modal
-  const openColumnMappingModal = useCallback((inputs: LLMResponse[]) => {
-    if (!columnMappingModalRef.current) return;
-    
-    // Get all unique field names from the inputs' metadata
-    const fieldNames = new Set<string>();
-    
-    inputs.forEach(response => {
-      if (response.vars) {
-        Object.keys(response.vars).forEach(key => fieldNames.add(key));
-      }
-      if (response.metavars) {
-        Object.keys(response.metavars).forEach(key => fieldNames.add(key));
-      }
-    });
-    
-    // Convert to array and remove any system fields we don't want to expose
-    const fieldsToMap = Array.from(fieldNames).filter(field => 
-      !['__uid', 'uid', '__system', 'text'].includes(field)
-    );
-    
-    // Open the modal with the detected fields
-    columnMappingModalRef.current.openModal(fieldsToMap, (newMappings: ColumnMapping[]) => {
-      setColumnMappings(newMappings);
-      setDataPropsForNode(id, { columnMappings: newMappings });
-      setNeedsColumnMapping(false);
-      // After getting mappings, retry the run if we were in the middle of one
-      if (status === Status.LOADING) {
-        handleRunClick();
-      }
-    });
-  }, [setColumnMappings, setDataPropsForNode, id, status]);
-
   const handleRunClick = useCallback(() => {
     // Pull inputs to the node
     const pulled_inputs = handlePullInputs();
     if (!pulled_inputs || pulled_inputs.length === 0) return;
 
-    // Check if we need column mapping first
-    if (checkForColumnMapping(pulled_inputs)) {
-      setNeedsColumnMapping(true);
-      openColumnMappingModal(pulled_inputs);
-      return;
-    }
+    // Removed column mapping check
 
     // Get the ids from the connected input nodes:
     const input_node_ids = inputEdgesForNode(id).map((e) => e.source);
@@ -774,22 +741,11 @@ const MultiEvalNode: React.FC<MultiEvalNodeProps> = ({ data, id }) => {
           resp.vars = filterMetadata(resp.vars);
           resp.metavars = filterMetadata(resp.metavars);
 
-          // Apply column mappings to eval results if they exist
-          if (columnMappings.length > 0 && resp.eval_res && resp.eval_res.items) {
-            resp.eval_res.items = resp.eval_res.items.map(item => {
-              const mappedItem: Dict<any> = {};
-              
-              // Copy each field using the mapped display name if available
-              for (const [key, value] of Object.entries(item)) {
-                const mapping = columnMappings.find(m => m.responseField === key);
-                const displayKey = mapping ? mapping.displayName : key;
-                mappedItem[displayKey] = value;
-              }
-              
-              return mappedItem;
-            });
-          }
+          // Removed column mapping application code
         });
+
+        // NEW: Set the output in node data so connected nodes (e.g. VisNode) can grab the results.
+        setDataPropsForNode(id, { output: finalResponses });
 
         setLastResponses(finalResponses);
         setLastRunSuccess(true);
@@ -805,9 +761,7 @@ const MultiEvalNode: React.FC<MultiEvalNodeProps> = ({ data, id }) => {
     showDrawer,
     evaluators,
     evaluatorComponentRefs,
-    checkForColumnMapping,
-    openColumnMappingModal,
-    columnMappings,
+    // Removed dependencies on column mapping functions
   ]);
 
   const showResponseInspector = useCallback(() => {
@@ -825,33 +779,28 @@ const MultiEvalNode: React.FC<MultiEvalNodeProps> = ({ data, id }) => {
     }
   }, [data]);
 
-  // Effect to initialize column mappings from data props if available
-  useEffect(() => {
-    if (data.columnMappings && data.columnMappings.length > 0) {
-      setColumnMappings(data.columnMappings);
-    }
-  }, [data.columnMappings]);
+  // NEW: State for showing the field mapping modal popup on node creation
+  const [showFieldMappingModal, setShowFieldMappingModal] = useState(true);
 
-  // Add a button to manually open the column mapping modal
-  const openColumnMappingsButton = useMemo(() => (
-    <Tooltip label="Configure Column Mappings" position="left" withArrow>
-      <ActionIcon 
-        variant="outline" 
-        color="gray" 
-        size="sm" 
-        onClick={() => {
-          const inputs = handlePullInputs();
-          if (inputs.length > 0) {
-            openColumnMappingModal(inputs);
-          } else {
-            showAlert && showAlert("No input data available. Connect inputs before configuring columns.");
-          }
-        }}
-      >
-        <IconColumns size="12px" />
-      </ActionIcon>
-    </Tooltip>
-  ), [handlePullInputs, openColumnMappingModal, showAlert]);
+  // NEW: State for RAGAS field mappings with default values
+  const [ragasFieldMappings, setRagasFieldMappings] = useState<RagasFieldMappings>({
+    questionField: "Question",
+    answerField: "Answer",
+    contextField: "context",
+    groundTruthField: "groundTruth"
+  });
+
+  // NEW: Update mappings and save to node data
+  const handleRagasFieldMappingsChange = (newMappings: RagasFieldMappings) => {
+    setRagasFieldMappings(newMappings);
+    setDataPropsForNode(id, { ragasFieldMappings: newMappings });
+    setStatus(Status.WARNING);
+  };
+
+  // NEW: Handler for closing the mapping modal upon submit
+  const handleMappingSubmit = () => {
+    setShowFieldMappingModal(false);
+  };
 
   return (
     <BaseNode
@@ -866,21 +815,7 @@ const MultiEvalNode: React.FC<MultiEvalNodeProps> = ({ data, id }) => {
         status={status}
         handleRunClick={handleRunClick}
         runButtonTooltip="Run all evaluators over inputs"
-        customButtons={[
-          // Add button for column mapping configuration
-          columnMappings.length > 0 ? (
-            <Tooltip
-              key="column-mapping-status"
-              label="Column mappings configured"
-              position="top"
-              withArrow
-            >
-              <div style={{ color: '#4CAF50', fontSize: '10px', marginRight: '5px' }}>
-                <IconColumns size="14px" />
-              </div>
-            </Tooltip>
-          ) : null
-        ]}
+        customButtons={[]}
       />
 
       <LLMResponseInspectorModal
@@ -890,22 +825,24 @@ const MultiEvalNode: React.FC<MultiEvalNodeProps> = ({ data, id }) => {
       {/* <PickCriteriaModal ref={pickCriteriaModalRef} /> */}
       <iframe style={{ display: "none" }} id={`${id}-iframe`}></iframe>
       
-      {/* Add the Column Mapping Modal */}
-      <ColumnMappingModal ref={columnMappingModalRef} title="Configure Evaluation Column Names" />
+      {/* NEW: Modal popup for RAGAS Field Mappings */}
+      <Modal
+        opened={showFieldMappingModal}
+        onClose={handleMappingSubmit}
+        title="RAGAS Field Mappings"
+        centered
+        withCloseButton={false}
+      >
+        <RagasFieldMappingForm 
+          mappings={ragasFieldMappings} 
+          onChange={handleRagasFieldMappingsChange} 
+          availableFields={availableFields} 
+        />
+        <Group position="right" mt="md">
+          <Button onClick={handleMappingSubmit}>Submit</Button>
+        </Group>
+      </Modal>
 
-      {/* Display a message if column mapping is needed */}
-      {needsColumnMapping && (
-        <Alert 
-          color="yellow" 
-          title="Column Mapping Needed" 
-          mb={10}
-          icon={<IconAlertCircle size="1rem" />}
-        >
-          We detected metadata fields in your inputs. Please configure how these should be displayed.
-        </Alert>
-      )}
-
-      {/* {evaluatorComponents} */}
       {evaluators.map((e, idx) => (
         <EvaluatorContainer
           name={e.name}
@@ -1013,17 +950,15 @@ const MultiEvalNode: React.FC<MultiEvalNodeProps> = ({ data, id }) => {
         className="grouped-handle"
         style={{ top: "50%" }}
       />
-      {/* TO IMPLEMENT <Handle
+      <Handle
         type="source"
         position={Position.Right}
         id="output"
-        className="grouped-handle"
         style={{ top: "50%" }}
-      /> */}
+      />
 
       <div className="add-text-field-btn">
         <Group spacing="xs">
-          {openColumnMappingsButton}
           <Menu withinPortal position="right-start" shadow="sm">
             <Menu.Target>
               <Tooltip label="Add evaluator" position="left" withArrow>
@@ -1052,10 +987,14 @@ const MultiEvalNode: React.FC<MultiEvalNodeProps> = ({ data, id }) => {
                 <Menu.Item
                   icon={<IconTerminal size="14px" />}
                   onClick={() =>
-                    addEvaluator(`Criteria ${evaluators.length + 1}`, "python", {
-                      code: "def evaluate(r):\n\treturn len(r.text)",
-                      sandbox: true,
-                    })
+                    addEvaluator(
+                      `Criteria ${evaluators.length + 1}`,
+                      "python",
+                      {
+                        code: "def evaluate(r):\n\treturn len(r.text)",
+                        sandbox: true,
+                      },
+                    )
                   }
                 >
                   Python

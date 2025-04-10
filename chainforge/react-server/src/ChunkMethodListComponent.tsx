@@ -231,12 +231,23 @@ const ChunkMethodListItem: React.FC<{
         {schema && Object.keys(schema).length > 0 ? (
           <Form
             schema={schema}
-            uiSchema={uiSchema}
+            uiSchema={{
+              ...uiSchema,
+              "ui:submitButtonOptions": { norender: true }, // Hide default submit button
+            }}
             formData={formData}
             onChange={(evt) => setFormData(evt.formData)}
             validator={validator as any}
             liveValidate
             noHtml5Validate
+            onSubmit={(e) => {
+              onSettingsUpdate(methodItem.key, {
+                ...formData,
+                displayName: customName,
+                emoji,
+              });
+              close();
+            }}
           />
         ) : (
           <Text size="sm" color="dimmed">

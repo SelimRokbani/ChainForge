@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Handle, Position } from "reactflow";
-import { Group, Text, Button, Center, Tooltip, Loader } from "@mantine/core";
-import { IconInfoCircle } from "@tabler/icons-react";
+import { Group, Text, Button, Center, Tooltip, Loader, Popover } from "@mantine/core";
+import { IconInfoCircle, IconList } from "@tabler/icons-react";
 import { useDisclosure } from "@mantine/hooks";
 import { v4 as uuid } from "uuid";
 
@@ -46,56 +46,55 @@ const PromptListPopover: React.FC<PromptListPopoverProps> = ({
   }, [onHover, open]);
 
   return (
-    <div style={{ position: "relative", display: "inline-block" }}>
-      <Tooltip label="Click to view query previews" withArrow>
-        <Button
-          className="custom-button"
-          onMouseEnter={_onHover}
-          onMouseLeave={close}
-          onClick={onClick}
-          style={{ border: "none", background: "none", padding: 0 }}
-        >
-          <IconInfoCircle
-            size="12pt"
-            color="gray"
-            style={{ marginBottom: "-4px" }}
-          />
-        </Button>
-      </Tooltip>
-      {opened && (
-        <div
-          style={{
-            position: "absolute",
-            top: "100%",
-            left: "50%",
-            transform: "translateX(-50%)",
-            zIndex: 1000,
-            backgroundColor: "#fff",
-            boxShadow: "0px 10px 30px -14px rgb(38, 57, 77)",
-            borderRadius: "4px",
-            padding: "8px",
-            maxHeight: "500px",
-            maxWidth: "400px",
-            overflowY: "auto",
-          }}
-        >
-          <Center>
-            <Text size="xs" fw={500} color="#666">
-              Query Previews ({promptInfos?.length} total)
-            </Text>
-          </Center>
-          {promptInfos.map((info, idx) => (
-            <Text
-              key={idx}
-              size="xs"
-              style={{ whiteSpace: "pre-wrap", margin: "4px 0" }}
-            >
-              {info}
-            </Text>
-          ))}
-        </div>
-      )}
-    </div>
+    <Popover
+      position="right-start"
+      withArrow
+      withinPortal
+      shadow="rgb(38, 57, 77) 0px 10px 30px -14px"
+      opened={opened}
+      styles={{
+        dropdown: {
+          maxHeight: "500px",
+          maxWidth: "400px",
+          overflowY: "auto",
+          backgroundColor: "#fff",
+        },
+      }}
+    >
+      <Popover.Target>
+        <Tooltip label="Click to view query previews" withArrow>
+          <button
+            className="custom-button"
+            onMouseEnter={_onHover}
+            onMouseLeave={close}
+            onClick={onClick}
+            style={{ border: "none", background: "none", padding: 0 }}
+          >
+            <IconList
+              size="12pt"
+              color="gray"
+              style={{ marginBottom: "-4px" }}
+            />
+          </button>
+        </Tooltip>
+      </Popover.Target>
+      <Popover.Dropdown sx={{ pointerEvents: "none" }}>
+        <Center>
+          <Text size="xs" fw={500} color="#666">
+            Query Previews ({promptInfos?.length} total)
+          </Text>
+        </Center>
+        {promptInfos.map((info, idx) => (
+          <Text
+            key={idx}
+            size="xs"
+            style={{ whiteSpace: "pre-wrap", margin: "4px 0" }}
+          >
+            {info}
+          </Text>
+        ))}
+      </Popover.Dropdown>
+    </Popover>
   );
 };
 
@@ -234,6 +233,8 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
 
   const buildLLMResponses = (resultsData: RetrievalResults): LLMResponse[] => {
     const arr: LLMResponse[] = [];
+    
+    // Process each method's results
     Object.entries(resultsData).forEach(([methodKey, methodObj]) => {
       const methodItem = methodItems.find((m) => m.key === methodKey);
       const baseLabel =
@@ -248,26 +249,38 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
           finalLabel = `${baseLabel} (${methodItem.vectorLib})`;
         }
       }
-      methodObj.retrieved.forEach((chunk) => {
+      
+      // Sort the retrieved chunks by similarity in descending order
+      const sortedChunks = [...methodObj.retrieved].sort((a, b) => 
+        b.similarity - a.similarity
+      );
+      
+      console.log("Sorted chunks by similarity (desc):", 
+        sortedChunks.map(c => ({ id: c.chunkId, sim: c.similarity }))
+      );
+      
+      // Create LLM responses from the sorted chunks
+      sortedChunks.forEach((chunk) => {
         const cUid = uuid();
-        const chunkMethodDisplay =
-          chunk.chunkMethod || chunk.chunkMethod || finalLabel;
+        
+        // Preserve original chunk method (ensure it exists)
+        const originalChunkMethod = chunk.chunkMethod || "Unknown Method";
+        
         arr.push({
           uid: cUid,
-          prompt: `Retrieved by chunk method: ${chunkMethodDisplay}`,
+          prompt: `Retrieved by chunk method: ${originalChunkMethod} using ${finalLabel} [similarity: ${chunk.similarity.toFixed(3)}]`,
           vars: {
             similarity: chunk.similarity.toFixed(3),
-            docTitle: chunk.docTitle || "Untitled",
-            chunkId: chunk.chunkId || "",
-            chunkMethod: chunkMethodDisplay,
+            chunkMethod: originalChunkMethod,
+            retrievalMethod: finalLabel,
           },
           responses: [` ${chunk.text}`],
-          llm: chunkMethodDisplay,
+          llm: finalLabel,
           metavars: {
-            retrievalMethod: chunkMethodDisplay,
+            retrievalMethod: finalLabel,
             docTitle: chunk.docTitle,
             chunkId: chunk.chunkId,
-            chunkMethod: chunkMethodDisplay,
+            chunkMethod: originalChunkMethod,
             similarity: chunk.similarity,
           },
         });
@@ -346,12 +359,16 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
     console.log("Tabular data extracted:", tabularData);
 
     const baseQueries = queryText.split("\n").filter((q) => q.trim());
-    const chunkArr = pulledData.fields || [];
+    
+    // Filter out any empty chunks from the input data
+    const chunkArr = (pulledData.fields || []).filter(chunk => chunk && chunk.text && chunk.text.trim() !== '');
 
     if (chunkArr.length === 0 && !templateVars.length) {
       alert("No chunk data found from upstream node or template variables.");
       return;
     }
+
+    console.log(`Found ${chunkArr.length} valid chunks for retrieval`);
 
     let maxRows = 1;
     if (templateVars.length > 0) {
@@ -418,25 +435,51 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
       try {
         const topKSetting = method.settings?.top_k ?? 5;
         for (const resolvedQuery of queries) {
+          // Log the chunk data to see what we're actually sending
+          console.log("Chunks being sent to retrieval:", chunkArr);
+          
           const payload: any = {
             query: resolvedQuery,
             top_k: topKSetting,
             similarity_threshold: method.settings?.similarity_threshold ?? 0.7,
-            chunks: chunkArr.map((chunk) => ({
-              text: chunk.text,
-              docTitle:
-                chunk.fill_history?.docTitle || chunk.metavars?.docTitle || "",
-              chunkId:
-                chunk.fill_history?.chunkId || chunk.metavars?.chunkId || "",
-              chunkMethod: chunk.metavars?.chunkMethod || "",
-            })),
+            chunks: chunkArr
+              .filter(chunk => chunk && chunk.text && chunk.text.trim() !== '') // Additional filter for safety
+              .map((chunk) => {
+                // Extract the chunking method from the proper location
+                const chunkMethod = 
+                  chunk.metavars?.chunkMethod || 
+                  chunk.fill_history?.chunkMethod || 
+                  "";
+                
+                console.log("Processing chunk:", {
+                  chunkId: chunk.metavars?.chunkId || "",
+                  chunkMethod,
+                  textLength: chunk.text?.length || 0
+                });
+                
+                return {
+                  text: chunk.text,
+                  docTitle: chunk.metavars?.docTitle || chunk.fill_history?.docTitle || "",
+                  chunkId: chunk.metavars?.chunkId || chunk.fill_history?.chunkId || "",
+                  chunkMethod: chunkMethod,
+                };
+              }),
             custom_method_key: method.key,
           };
+          
+          // Log the first chunk to debug
+          if (payload.chunks.length > 0) {
+            console.log("Sample chunk in payload:", payload.chunks[0]);
+          } else {
+            console.warn("No valid chunks in payload!");
+            continue; // Skip this query if no valid chunks
+          }
 
           if (method.needsVector) {
+            // Ensure we have a default vectorization library
             payload.library = method.vectorLib || "HuggingFace Transformers";
             payload.type = "vectorization";
-            payload.method = method.baseMethod;
+            payload.method = method.baseMethod || "cosine";
             if (method.vectorLib === "OpenAI Embeddings") {
               payload.openai_model =
                 method.settings?.openai_model ?? "text-embedding-ada-002";
@@ -463,7 +506,10 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
                   method.settings?.normalization_factor ?? 0.75;
                 break;
               default:
-                payload.library = "KeywordBased";
+                // Set a default library for non-vector methods to prevent "Unknown vector library: None" error
+                payload.library = "KeywordOverlap";
+                payload.type = "retrieval";
+                break;
             }
             payload.type = "retrieval";
           }
@@ -543,6 +589,9 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
         const queryTabularData = tabularData[query] || {};
 
         chunks.forEach((chunk) => {
+          // Extract and preserve original chunk method
+          const originalChunkMethod = chunk.chunkMethod || "";
+          
           outputChunks.push({
             text: chunk.text,
             prompt: query,
@@ -552,6 +601,8 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
                 method.vectorLib && method.settings?.openai_model
                   ? method.settings.openai_model
                   : undefined,
+              chunkMethod: originalChunkMethod, // Preserve original chunking method
+              retrievalMethod: methodLabel, // Add retrieval method separately
               ...queryTabularData, // Add all tabular data to fill_history
             },
             metavars: {
@@ -560,8 +611,8 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
               similarity: chunk.similarity.toString(),
               docTitle: chunk.docTitle || "",
               chunkId: chunk.chunkId || "",
-              chunkMethod: chunk.chunkMethod || "",
-              retrievalMethod: methodLabel,
+              chunkMethod: originalChunkMethod, // Preserve original chunking method
+              retrievalMethod: methodLabel, // Add retrieval method as a separate field
               methodGroup: methodKey,
               queryGroup: query,
               ...queryTabularData, // Add all tabular data to metavars
@@ -671,7 +722,7 @@ const RetrievalNode: React.FC<RetrievalNodeProps> = ({ data, id }) => {
             onChange={handleQueryChange}
             style={{
               width: "100%",
-              minHeight: "100px",
+              minHeight: "40px",
               resize: "vertical",
               padding: "8px",
               fontSize: "14px",

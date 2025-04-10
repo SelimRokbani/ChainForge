@@ -26,15 +26,8 @@ export const ragasEvaluators: RagasEvaluator[] = [
     null;
   
   if (!expectedAnswer) {
-    return {
-      error: "Missing required metadata field: Answer or ExpectedAnswer",
-      answerCorrectness: "0.000"
-    };
+    return 0;
   }
-
-  // Get retrieval metadata
-  const docTitle = response.meta?.docTitle || "Unknown document";
-  const similarity = parseFloat(response.meta?.similarity || "0");
 
   // Normalize text for comparison
   const normalizeText = (text) => text
@@ -66,14 +59,7 @@ export const ragasEvaluators: RagasEvaluator[] = [
     score = matchedWords / answerWords.length;
   }
 
-  return {
-    question: question,
-    expectedAnswer: expectedAnswer,
-    containsAnswer: containsAnswer,
-    matchedWords: containsAnswer ? answerWords.join(", ") : answerWords.filter(word => normalizedResponse.includes(word)).join(", "),
-    similarity: similarity.toFixed(3),
-    answerCorrectness: score.toFixed(3)
-  };
+  return score;
 }`,
   },
   {
@@ -87,7 +73,6 @@ export const ragasEvaluators: RagasEvaluator[] = [
   const contextKeywords = (response.meta?.context || "").split(',').map(k => k.trim().toLowerCase()).filter(k => k);
 
   // Get retrieval metadata
-  const docTitle = response.meta?.docTitle || "Unknown document";
   const similarity = parseFloat(response.meta?.similarity || "0");
 
   // Preprocess text
@@ -107,13 +92,11 @@ export const ragasEvaluators: RagasEvaluator[] = [
 
   // Combine question keywords and context keywords
   const allKeywords = [...questionKeywords, ...contextKeywords];
-  const keywordMatches = [];
   let matchCount = 0;
 
   // Single pass to check for keyword matches
   allKeywords.forEach(keyword => {
     if (keyword && normalizedResponse.includes(keyword)) {
-      keywordMatches.push(keyword);
       matchCount++;
     }
   });
@@ -125,15 +108,7 @@ export const ragasEvaluators: RagasEvaluator[] = [
   // Adjust score based on vector similarity
   const combinedScore = (relevanceScore * 0.7) + (similarity * 0.3);
 
-
-
-  return {
-    similarityScore: similarity.toFixed(3),
-    keywordMatches: keywordMatches.join(", "),
-    matchingKeywordCount: matchCount,
-    totalKeywordCount: totalKeywords,
-    contextRelevance: relevanceScore.toFixed(3),
-  };
+  return combinedScore;
 }`,
   },
   {
@@ -143,7 +118,6 @@ export const ragasEvaluators: RagasEvaluator[] = [
     language: "javascript",
     code: `function evaluate(response) {
   // Validate required metadata fields
-  const question = response.meta?.queryGroup || response.meta?.Question || "Unknown question";
   const expectedAnswer = 
     response.meta?.Answer || 
     response.meta?.ExpectedAnswer || 
@@ -158,15 +132,8 @@ export const ragasEvaluators: RagasEvaluator[] = [
     "";
 
   if (!expectedAnswer) {
-    return {
-      error: "Missing required metadata field: Answer or ExpectedAnswer",
-      faithfulnessScore: "0.000"
-    };
+    return 0;
   }
-
-  // Get retrieval metadata
-  const docTitle = response.meta?.docTitle || "Unknown document";
-  const similarity = parseFloat(response.meta?.similarity || "0");
 
   // Normalize text
   const normalizeText = (text) => text
@@ -199,13 +166,7 @@ export const ragasEvaluators: RagasEvaluator[] = [
     faithfulnessScore = 0.5; // Partial score for having ground truth but not explicitly supporting answer
   }
 
-  return {
-    expectedAnswer: expectedAnswer,
-    supportsAnswer: supportsAnswer,
-    containsGroundTruth: containsGroundTruth,
-    faithfulnessScore: faithfulnessScore.toFixed(3),
-    documentPreview: response.text.substring(0, 100) + "..."
-  };
+  return faithfulnessScore;
 }`,
   },
   {
@@ -239,14 +200,10 @@ export const ragasEvaluators: RagasEvaluator[] = [
   const contextKeywords = (response.meta?.context || "").split(',').map(k => k.trim().toLowerCase()).filter(k => k);
 
   if (!expectedAnswer) {
-    return {
-      error: "Missing required metadata field: Answer or ExpectedAnswer",
-      ragasScore: "0.000"
-    };
+    return 0;
   }
 
   // Get retrieval metadata
-  const docTitle = response.meta?.docTitle || "Unknown document";
   const similarity = parseFloat(response.meta?.similarity || "0");
 
   // Normalize text
@@ -298,18 +255,7 @@ export const ragasEvaluators: RagasEvaluator[] = [
     (similarity * weights.retrieval)
   );
 
-  return {
-    expectedAnswer: expectedAnswer,
-    containsAnswer: containsAnswer,
-    contextRelevance: relevanceScore.toFixed(3),
-    containsGroundTruth: containsGroundTruth,
-    ragasScore: ragasScore.toFixed(3),
-    answerScore: answerScore.toFixed(3),
-    relevanceScore: relevanceScore.toFixed(3),
-    faithfulnessScore: faithfulnessScore.toFixed(3),
-    retrievalScore: similarity.toFixed(3),
-    weightsUsed: weights
-  };
+  return ragasScore;
 }`,
   },
   {
@@ -318,11 +264,7 @@ export const ragasEvaluators: RagasEvaluator[] = [
       "Evaluates how well-grounded a response is in the source document",
     language: "javascript",
     code: `function evaluate(response) {
-  // Get question from metadata
-  const question = response.meta?.queryGroup || response.meta?.Question || "Unknown question";
-
   // Get retrieval metadata
-  const docTitle = response.meta?.docTitle || "Unknown document";
   const similarity = parseFloat(response.meta?.similarity || "0");
 
   // Normalize text
@@ -348,17 +290,10 @@ export const ragasEvaluators: RagasEvaluator[] = [
 
   // Calculate groundedness score based on fact density and similarity
   const factDensity = keyFacts.size / (response.text.length / 100); // Facts per 100 chars
-  const wordCount = response.text.split(/\\s+/).length;
 
   const groundednessScore = Math.min(1.0, (factDensity * 0.5) + (similarity * 0.5));
 
-  return {
-    documentLength: wordCount,
-    factCount: keyFacts.size,
-    factDensity: factDensity.toFixed(3),
-    keyFactExamples: Array.from(keyFacts).slice(0, 5).join(", "),
-    groundednessScore: groundednessScore.toFixed(3)
-  };
+  return groundednessScore;
 }`,
   },
   {
@@ -367,11 +302,7 @@ export const ragasEvaluators: RagasEvaluator[] = [
       "Evaluates if the retrieved document contains information that would be cited",
     language: "javascript",
     code: `function evaluate(response) {
-  // Get question from metadata
-  const question = response.meta?.queryGroup || response.meta?.Question || "Unknown question";
-
   // Get retrieval metadata
-  const docTitle = response.meta?.docTitle || "Unknown document";
   const similarity = parseFloat(response.meta?.similarity || "0");
 
   // Check for citation-worthy content
@@ -385,25 +316,16 @@ export const ragasEvaluators: RagasEvaluator[] = [
   ];
 
   let citationWorthy = 0;
-  let citationExamples = [];
 
   citationPatterns.forEach(pattern => {
     const matches = [...response.text.matchAll(pattern)];
     citationWorthy += matches.length;
-    matches.slice(0, 2).forEach(match => {
-      if (match[0]) citationExamples.push(match[0].trim());
-    });
   });
 
   // Calculate precision score
   const citationPrecision = Math.min(1.0, (citationWorthy / 3) * 0.7 + (similarity * 0.3));
 
-  return {
-    citationWorthyCount: citationWorthy,
-    citationExamples: citationExamples.join("; "),
-    similarity: similarity.toFixed(3),
-    citationPrecision: citationPrecision.toFixed(3)
-  };
+  return citationPrecision;
 }`,
   },
   {
@@ -415,7 +337,6 @@ export const ragasEvaluators: RagasEvaluator[] = [
   const question = response.meta?.queryGroup || response.meta?.Question || "Unknown question";
 
   // Get retrieval metadata
-  const docTitle = response.meta?.docTitle || "Unknown document";
   const similarity = parseFloat(response.meta?.similarity || "0");
 
   // Normalize text
@@ -426,14 +347,6 @@ export const ragasEvaluators: RagasEvaluator[] = [
     .trim();
 
   const normalizedResponse = normalizeText(response.text);
-
-  // Analyze query type
-  const isWhatQuery = /^what\\s/i.test(question);
-  const isWhoQuery = /^who\\s/i.test(question);
-  const isWhereQuery = /^where\\s/i.test(question);
-  const isWhenQuery = /^when\\s/i.test(question);
-  const isWhyQuery = /^why\\s/i.test(question);
-  const isHowQuery = /^how\\s/i.test(question);
 
   // Extract key entities from question
   const stopWords = new Set(["what", "where", "when", "which", "whose", "does", "that", "this", "have"]);
@@ -448,15 +361,9 @@ export const ragasEvaluators: RagasEvaluator[] = [
   const wordMatchRatio = questionWords.length > 0 ? matchingWords.length / questionWords.length : 0;
 
   // Adjust score based on question type
-  let alignmentScore = wordMatchRatio * 0.7 + similarity * 0.3;
+  const alignmentScore = wordMatchRatio * 0.7 + similarity * 0.3;
 
-
-  return {
-    keywordMatches: matchingWords.join(", "),
-    matchRatio: wordMatchRatio.toFixed(2),
-    similarity: similarity.toFixed(3),
-    alignmentScore: alignmentScore.toFixed(3)
-  };
+  return alignmentScore;
 }`,
   },
   {
@@ -465,7 +372,6 @@ export const ragasEvaluators: RagasEvaluator[] = [
     language: "javascript",
     code: `function evaluate(response) {
   // Validate required metadata fields
-  const question = response.meta?.queryGroup || response.meta?.Question || "Unknown question";
   const expectedAnswer = 
     response.meta?.Answer || 
     response.meta?.ExpectedAnswer || 
@@ -474,10 +380,7 @@ export const ragasEvaluators: RagasEvaluator[] = [
     null;
 
   if (!expectedAnswer) {
-    return {
-      error: "Missing required metadata field: Answer or ExpectedAnswer",
-      completenessScore: "0.000"
-    };
+    return 0;
   }
 
   // Normalize text
@@ -506,13 +409,7 @@ export const ragasEvaluators: RagasEvaluator[] = [
   const completenessScore = expectedComponents.length > 0 ?
     matchedComponents.length / expectedComponents.length : 0;
 
-  return {
-    question: question,
-    expectedAnswer: expectedAnswer,
-    expectedComponents: expectedComponents.join(", "),
-    matchedComponents: matchedComponents.join(", "),
-    completenessScore: completenessScore.toFixed(3)
-  };
+  return completenessScore;
 }`,
   },
 ];

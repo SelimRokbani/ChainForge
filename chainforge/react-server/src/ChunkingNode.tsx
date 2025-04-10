@@ -189,15 +189,22 @@ const ChunkingNode: React.FC<ChunkingNodeProps> = ({ data, id }) => {
             }
 
             chunks.forEach((cText) => {
+              // Skip empty chunks
+              if (!cText || cText.trim() === '') {
+                console.log("Skipping empty chunk");
+                return;
+              }
+              
               // Use the displayName-based counter
               const cId = `${displayName}_${chunkCounters[displayName]}`;
               chunkCounters[displayName]++;
-              // Create the chunk object with displayed name in fill_history.
+              
+              // Create the chunk object with displayed name in proper fields
               const chunkVar: TemplateVarInfo = {
                 text: cText,
                 prompt: "",
                 fill_history: {
-                  chunkMethod: displayName,
+                  chunkMethod: displayName, // Explicitly set chunkMethod
                   docTitle,
                   chunkLibrary: library,
                   chunkId: cId,
@@ -207,21 +214,28 @@ const ChunkingNode: React.FC<ChunkingNodeProps> = ({ data, id }) => {
                   docTitle,
                   chunkLibrary: library,
                   chunkId: cId,
+                  chunkMethod: displayName, // Explicitly set chunkMethod in metavars too
                 },
               };
+
+              // Log what we're creating to verify the data
+              console.log(`Creating chunk with method: ${displayName}`, chunkVar);
 
               allChunksByLibrary[library].push(chunkVar);
 
               const respObj: LLMResponse = {
                 uid: cId,
                 prompt: `Doc: ${docTitle} | Method: ${displayName} | Chunk: ${truncateString(cId, 25)}`,
-                vars: {},
+                vars: {
+                  
+                },
                 responses: [`[Chunk ID: ${cId}]\n${cText}`],
                 llm: displayName,
                 metavars: {
                   docTitle,
                   chunkLibrary: library,
                   chunkId: cId,
+                  chunkMethod: displayName,
                 },
               };
 
@@ -250,14 +264,49 @@ const ChunkingNode: React.FC<ChunkingNodeProps> = ({ data, id }) => {
           docTitle: ch.metavars?.docTitle,
           method: ch.fill_history?.chunkMethod,
           text: ch.text,
+          chunkMethod: ch.fill_history?.chunkMethod || ch.metavars?.chunkMethod, // Explicitly include chunkMethod
+          chunkId: ch.metavars?.chunkId,
+          chunkLibrary: lib,
+          // Include full metadata
+          metavars: {
+            ...(ch.metavars || {}),
+            chunkMethod: ch.fill_history?.chunkMethod || ch.metavars?.chunkMethod, // Ensure chunkMethod is in metavars
+          },
+          fill_history: ch.fill_history,
         }));
         return acc;
       },
       {} as Record<string, any[]>,
     );
 
+    // Pass output with enriched metadata
+    const finalChunks = allChunks
+      .filter(chunk => chunk.text && chunk.text.trim() !== '') // Filter out empty chunks
+      .map(chunk => {
+        // Ensure chunkMethod is properly set in all locations
+        const chunkMethod = chunk.fill_history?.chunkMethod || chunk.metavars?.chunkMethod;
+        
+        // Log to verify what we're outputting
+        console.log(`Outputting chunk with method: ${chunkMethod}`, {
+          id: chunk.metavars?.chunkId,
+          chunkMethod
+        });
+        
+        return {
+          ...chunk,
+          metavars: {
+            ...(chunk.metavars || {}),
+            chunkMethod, // Ensure chunkMethod is correctly set
+          },
+          fill_history: {
+            ...(chunk.fill_history || {}),
+            chunkMethod, // Ensure chunkMethod is correctly set
+          }
+        };
+      });
+
     setDataPropsForNode(id, {
-      fields: allChunks,
+      fields: finalChunks,
       output: groupedOutput,
     });
     pingOutputNodes(id);
